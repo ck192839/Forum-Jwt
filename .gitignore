@@ -1,0 +1,13 @@
+target/
+log/
+*.log
+*.iml
+.idea/
+*.class
+*.jar
+*.war
+*.original
+
+# 配置文件（含敏感信息，使用 .example 版本）
+my-project-backend/src/main/resources/application.yml
+my-project-backend/src/main/resources/application-dev.yml

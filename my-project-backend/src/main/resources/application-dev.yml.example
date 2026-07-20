@@ -1,0 +1,67 @@
+spring:
+  mail:
+    host: smtp.163.com
+    username: ${MAIL_USERNAME:your-email@163.com}
+    password: ${MAIL_PASSWORD:your-password}
+
+  rabbitmq:
+    host: localhost
+    username: admin
+    password: ${RABBIT_PASSWORD:your-password}
+    virtual-host: /
+    listener:
+      simple:
+        retry:
+          enabled: true
+          max-attempts: 3
+          initial-interval: 1000ms
+  elasticsearch:
+    uris: localhost:9200
+    username: elastic
+    password: ${ES_PASSWORD:your-password}
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      database: 0
+
+  security:
+    jwt:
+      key: '${JWT_KEY:your-jwt-key}'
+      expire: 72
+      limit:
+        base: 10
+        upgrade: 300
+        frequency: 30
+    filter:
+      order: -100
+
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/test
+    username: root
+    password: ${DB_PASSWORD:your-password}
+
+  minio:
+    endpoint: 'http://localhost:9000'
+    username: 'minioadmin'
+    password: '${MINIO_PASSWORD:your-password}'
+
+  weather:
+    api-host: 'n34y3m4qqe.re.qweatherapi.com'
+    key: '${WEATHER_KEY:your-api-key}'
+  ai:
+    deepseek:
+      api-key: '${DEEPSEEK_API_KEY:your-api-key}'
+      base-url: http://localhost:8099/chat/api/019dded4-a73a-7280-94fb-d5366eb9cce2
+  web:
+    verify:
+      mail-limit: 60
+    flow:
+      limit: 30
+      period: 10
+      block: 30
+    cors:
+      origin: '*'
+      credentials: false
+      methods: '*'
