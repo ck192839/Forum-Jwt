@@ -6,5 +6,6 @@ import com.example.entity.dto.EmailRecord;
 public interface EmailService {
     void sendVerifyEmail(String type, String email, int code);
     Page<EmailRecord> listEmailRecord(int page, int size);
+    long countFailedEmailRecord();
     boolean resendEmailRecord(int id);
 }

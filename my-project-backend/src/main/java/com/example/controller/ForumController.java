@@ -23,9 +23,9 @@ import org.springframework.web.bind.annotation.*;
 import java.util.Date;
 import java.util.List;
 
-@Validated
 @RestController
 @RequestMapping("/api/forum")
+@Validated
 public class ForumController {
     @Resource
     WeatherService service;
@@ -90,7 +90,7 @@ public class ForumController {
         }
     }
     @GetMapping("/interact")//帖子交互
-    public RestBean<Void> interact(@Valid @RequestParam @Min(0) int tid,
+    public RestBean<Void> interact( @RequestParam @Min(0) int tid,
                                    @RequestParam @Pattern(regexp = "like|collect") String type,
                                    @RequestParam boolean state,
                                   @RequestAttribute(Const.ATTR_USER_ID) int id) {

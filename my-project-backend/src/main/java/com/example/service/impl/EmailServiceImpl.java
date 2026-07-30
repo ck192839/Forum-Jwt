@@ -40,6 +40,12 @@ public class EmailServiceImpl implements EmailService {
     }
 
     @Override
+    public long countFailedEmailRecord() {
+        return recordMapper.selectCount(
+                Wrappers.<EmailRecord>query().eq("status", 2));
+    }
+
+    @Override
     public boolean resendEmailRecord(int id) {
         EmailRecord record = recordMapper.selectById(id);
         if(record == null) {

@@ -24,6 +24,11 @@ public class EmailAdminController {
         return PageRestBean.success(service.listEmailRecord(page, size));
     }
 
+    @GetMapping("/failed-count")
+    public RestBean<Long> countFailedEmailRecord() {
+        return RestBean.success(service.countFailedEmailRecord());
+    }
+
     @GetMapping("/resend")
     public RestBean<Void> resendEmailRecord(@RequestParam int id) {
         if (service.resendEmailRecord(id)) {

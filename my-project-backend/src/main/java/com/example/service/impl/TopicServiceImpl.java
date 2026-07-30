@@ -113,7 +113,7 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
     public void changeTopicType(int tid, int type) {
         if (baseMapper.update(null, Wrappers.<Topic>update()
                 .eq("id", tid)
-                .set("type", type)) > 1) {
+                .set("type", type)) > 0) {
             cacheUtils.deleteCachePattern(Const.FORUM_TOPIC_PREVIEW_CACHE + "*");
         }
     }
@@ -164,6 +164,7 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
                 .set("intro", Topic.recreateIntro(vo.getContent())));
         if (result == 1) {// todo 自建更新删缓存
             cacheUtils.deleteCachePattern(Const.FORUM_TOPIC_PREVIEW_CACHE + "*");// 删除所有缓存
+            cacheUtils.deleteCache(Const.FORUM_TOPIC_TOP_CACHE);
             return null;
         }
         return "文章被锁定，更新失败";
@@ -245,6 +246,7 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
     public void deleteTopic(int id) {// 管理端删除帖子
         baseMapper.deleteById(id);
         cacheUtils.deleteCachePattern(Const.FORUM_TOPIC_PREVIEW_CACHE + "*");
+        cacheUtils.deleteCache(Const.FORUM_TOPIC_TOP_CACHE);
         baseMapper.deleteTopicCollect(id);
         baseMapper.deleteTopicLike(id);
     }
@@ -256,6 +258,7 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
                 .eq("uid", uid));
         if (result > 0) {
             cacheUtils.deleteCachePattern(Const.FORUM_TOPIC_PREVIEW_CACHE + "*");
+            cacheUtils.deleteCache(Const.FORUM_TOPIC_TOP_CACHE);
             baseMapper.deleteTopicCollect(tid);
             baseMapper.deleteTopicLike(tid);
         }
@@ -263,9 +266,11 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
 
     @Override
     public void setTopicTop(int tid, boolean top) {// 设置帖子置顶
-        baseMapper.update(null, Wrappers.<Topic>update()
+        int result = baseMapper.update(null, Wrappers.<Topic>update()
                 .eq("id", tid)
                 .set("top", top));
+        if (result > 0)
+            cacheUtils.deleteCache(Const.FORUM_TOPIC_TOP_CACHE);
     }
 
     @Override
@@ -277,10 +282,13 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
 
     @Override
     public void setTopicInvisible(int tid, boolean invisible) {// 设置帖子是否可见设置为true表示不可见
-        baseMapper.update(null, Wrappers.<Topic>update()
+        int result = baseMapper.update(null, Wrappers.<Topic>update()
                 .eq("id", tid)
                 .set("invisible", invisible));
-        cacheUtils.deleteCachePattern(Const.FORUM_TOPIC_PREVIEW_CACHE + "*");
+        if (result > 0) {
+            cacheUtils.deleteCachePattern(Const.FORUM_TOPIC_PREVIEW_CACHE + "*");
+            cacheUtils.deleteCache(Const.FORUM_TOPIC_TOP_CACHE);
+        }
     }
 
     @Override
@@ -309,7 +317,7 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
     }
 
     @Override
-    public List<TopicPreviewVO> listTopicByPage(int pageNumber, int type) {// 用户端获取帖子预览列表
+    public List<TopicPreviewVO> listTopicByPage(int pageNumber, int type) {// 分页帖子预览
         String key = Const.FORUM_TOPIC_PREVIEW_CACHE + pageNumber + ":" + type;
         List<TopicPreviewVO> list = cacheUtils.takeListFromCache(key, TopicPreviewVO.class);
         if (list != null)
@@ -324,8 +332,6 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
                     .eq("invisible", 0).orderByDesc("time"));
         }
         List<Topic> topics = page.getRecords();
-        if (topics.isEmpty())
-            return null;
         list = topics.stream()
                 .map(this::resolveToPreview)
                 .toList();
@@ -335,17 +341,23 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
 
     @Override
     public List<TopicTopVO> listTopTopics() {// 顶置top=1的帖子
+        List<TopicTopVO> cache = cacheUtils.takeListFromCache(
+                Const.FORUM_TOPIC_TOP_CACHE, TopicTopVO.class);
+        if (cache != null)
+            return cache;
         List<Topic> topics = baseMapper.selectList(Wrappers.<Topic>query()
                 .select("id", "title", "time")
-                .eq("top", 1));
-        return topics.stream()
+                .eq("top", 1)
+                .eq("invisible", 0));
+        List<TopicTopVO> list = topics.stream()
                 .map(topic -> {
                     TopicTopVO vo = new TopicTopVO();
                     BeanUtils.copyProperties(topic, vo);
                     return vo;
                 })
                 .toList();
-
+        cacheUtils.saveListToCache(Const.FORUM_TOPIC_TOP_CACHE, list, 300);
+        return list;
     }
 
     @Override

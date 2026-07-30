@@ -1,191 +1,355 @@
 <script setup>
-
 import {
-    Bell,
-    ChatDotSquare, Collection,
-    DataLine,
-    Document,
-    Files,
-    Location, Message,
-    Monitor, Notification, Position, School,
-    Umbrella,
+    ChatDotSquare,
+    HomeFilled,
+    Message,
+    Setting,
     User
 } from "@element-plus/icons-vue";
 import UserInfo from "@/components/UserInfo.vue";
-import {inject, onMounted, ref} from "vue";
-import router from "@/router";
+import {computed, inject} from "vue";
 import {useRoute} from "vue-router";
 
-const adminMenu = [
+const route = useRoute()
+const loading = inject('userLoading')
+
+const navigation = [
     {
-        title: '校园论坛管理', icon: Location, sub: [
-            { title: '用户管理', icon: User, index: '/admin/user' },
-            { title: '邮件管理', icon: Message, index: '/admin/email' },
-            { title: '帖子广场管理', icon: ChatDotSquare, index: '/admin/forum' },
-            { title: '失物招领管理', icon: Bell },
-            { title: '校园活动管理', icon: Notification },
-            { title: '表白墙管理', icon: Umbrella },
-            { title: '合作机构管理', icon: School }
+        label: '工作台',
+        items: [
+            {title: '管理概览', icon: HomeFilled, index: '/admin'}
         ]
-    }, {
-        title: '探索与发现管理', icon: Position, sub: [
-            { title: '成绩管理', icon: Document },
-            { title: '课程表管理', icon: Files },
-            { title: '教务通知管理', icon: Monitor },
-            { title: '在线图书馆管理', icon: Collection },
-            { title: '预约教室管理', icon: DataLine }
+    },
+    {
+        label: '运营管理',
+        items: [
+            {title: '用户管理', icon: User, index: '/admin/user'},
+            {title: '帖子管理', icon: ChatDotSquare, index: '/admin/forum'},
+            {title: '邮件记录', icon: Message, index: '/admin/email'}
         ]
     }
 ]
 
-const route = useRoute()
-const loading = inject('userLoading')
-const pageTabs = ref([])
-
-function handleTabClick({ props }) {
-    router.push(props.name)
-}
-
-function handleTabClose(name) {
-    const index = pageTabs.value.findIndex(tab => tab.name === name)
-    const isCurrent = name === route.fullPath
-    pageTabs.value.splice(index, 1)
-    if(pageTabs.value.length > 0) {
-        //删除后，标签列表中还有剩余的Tab且关闭的是当前的，则自动进行切换，默认切换到上一个，如果没有上一个，则切换到下一个
-        if(isCurrent) {
-            router.push(pageTabs.value[Math.max(0, index - 1)].name)
-        }
-    } else {
-        router.push('/admin')
-    }
-}
-
-function addAdminTab(menu) {
-    if(!menu.index) return
-    if(pageTabs.value.findIndex(tab => tab.name === menu.index) < 0) {
-        pageTabs.value.push({
-            title: menu.title,
-            name: menu.index
-        })
-    }
-}
-
-onMounted(() => {
-    const initPage = adminMenu
-        .flatMap(menu => menu.sub)
-        .find(sub => sub.index === route.fullPath)
-    if(initPage) {
-        addAdminTab(initPage)
-    }
-})
+const currentPage = computed(() => navigation
+    .flatMap(group => group.items)
+    .find(item => item.index === route.path) ?? navigation[0].items[0])
 </script>
 
 <template>
-    <div class="admin-content" v-loading="loading" element-loading-text="正在进入，请稍后...">
-        <el-container style="height: 100%">
-            <el-aside width="230px" class="admin-content-aside">
-                <div class="logo-box">
-                    <el-image class="logo" src="https://element-plus.org/images/element-plus-logo.svg"/>
-                </div>
-                <el-scrollbar style="height: calc(100vh - 57px)">
-                    <el-menu
-                        router
-                        :default-active="$route.path"
-                        :default-openeds="['1', '2']"
-                        style="min-height: calc(100vh - 57px);border: none">
-                        <el-sub-menu :index="(index + 1).toString()"
-                                     v-for="(menu, index) in adminMenu">
-                            <template #title>
-                                <el-icon>
-                                    <component :is="menu.icon"/>
-                                </el-icon>
-                                <span><b>{{ menu.title }}</b></span>
-                            </template>
-                            <el-menu-item :index="subMenu.index"
-                                          @click="addAdminTab(subMenu)"
-                                          v-for="subMenu in menu.sub">
-                                <template #title>
-                                    <el-icon>
-                                        <component :is="subMenu.icon"/>
-                                    </el-icon>
-                                    {{ subMenu.title }}
-                                </template>
-                            </el-menu-item>
-                        </el-sub-menu>
-                    </el-menu>
+    <div class="admin-shell" v-loading="loading" element-loading-text="正在进入管理端...">
+        <el-container class="admin-layout">
+            <el-aside width="248px" class="admin-aside">
+                <router-link class="brand" to="/admin" aria-label="返回管理概览">
+                    <span class="brand-mark">
+                        <el-icon><Setting/></el-icon>
+                    </span>
+                    <span class="brand-copy">
+                        <strong>Campus Console</strong>
+                        <small>校园社区管理</small>
+                    </span>
+                </router-link>
+
+                <el-scrollbar class="nav-scrollbar">
+                    <nav class="admin-nav" aria-label="管理端导航">
+                        <section v-for="group in navigation" :key="group.label" class="nav-group">
+                            <div class="section-label">{{ group.label }}</div>
+                            <el-menu router :default-active="route.path" class="nav-menu">
+                                <el-menu-item v-for="item in group.items"
+                                              :key="item.index"
+                                              :index="item.index">
+                                    <el-icon><component :is="item.icon"/></el-icon>
+                                    <span class="menu-label">{{ item.title }}</span>
+                                </el-menu-item>
+                            </el-menu>
+                        </section>
+                    </nav>
                 </el-scrollbar>
+
             </el-aside>
-            <el-container>
-                <el-header class="admin-content-header">
-                    <div style="flex: 1">
-                        <el-tabs type="card"
-                                 :model-value="route.fullPath"
-                                 closable
-                                 @tab-remove="handleTabClose"
-                                 @tab-click="handleTabClick">
-                            <el-tab-pane v-for="tab in pageTabs"
-                                         :label="tab.title"
-                                         :name="tab.name"
-                                         :key="tab.name"/>
-                        </el-tabs>
+
+            <el-container class="admin-stage">
+                <el-header class="admin-header">
+                    <div class="page-heading">
+                        <span>管理控制台</span>
+                        <strong>{{ currentPage.title }}</strong>
                     </div>
                     <user-info/>
                 </el-header>
-                <el-main>
-                    <router-view v-slot="{ Component }">
-                        <keep-alive>
-                            <component :is="Component" />
-                        </keep-alive>
-                    </router-view>
+
+                <el-main class="admin-main">
+                    <el-scrollbar class="main-scrollbar">
+                        <router-view v-slot="{ Component }">
+                            <transition name="admin-page" mode="out-in">
+                                <component :is="Component"/>
+                            </transition>
+                        </router-view>
+                    </el-scrollbar>
                 </el-main>
             </el-container>
         </el-container>
     </div>
 </template>
 
-<style scoped>
-.admin-content {
-    height: 100vh;
+<style lang="less" scoped>
+.admin-shell,
+.admin-layout {
     width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+}
 
-    .admin-content-aside {
-        border-right: solid 1px var(--el-border-color);
+.admin-aside {
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid #dde2e5;
+    background: #ffffff;
+    transition: width .2s ease;
+}
 
-        .logo-box {
-            text-align: center;
-            padding: 15px 0 10px;
-            height: 32px;
+.brand {
+    height: 72px;
+    padding: 0 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    box-sizing: border-box;
+    color: #1f2926;
+    text-decoration: none;
+    border-bottom: 1px solid #edf0f1;
+}
 
-            .logo {
-                height: 32px;
-            }
-        }
+.brand-mark {
+    width: 34px;
+    height: 34px;
+    flex: 0 0 34px;
+    display: grid;
+    place-items: center;
+    border-radius: 6px;
+    color: #ffffff;
+    background: #167d5a;
+    font-size: 19px;
+}
+
+.brand-copy {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    line-height: 1.2;
+
+    strong {
+        font-size: 15px;
+        white-space: nowrap;
     }
 
-    .admin-content-header {
-        border-bottom: solid 1px var(--el-border-color);
-        height: 55px;
-        display: flex;
-        align-items: center;
-        box-sizing: border-box;
+    small {
+        margin-top: 4px;
+        color: #7a8581;
+        font-size: 11px;
+    }
+}
 
-        :deep(.el-tabs__header) {
-            height: 32px;
-            margin-bottom: 0;
-            border-bottom: none;
-        }
+.nav-scrollbar {
+    flex: 1;
+}
 
-        :deep(.el-tabs__nav) {
-            gap: 10px;
-            border: none;
-        }
+.admin-nav {
+    padding: 18px 12px;
+}
 
-        :deep(.el-tabs__item) {
-            height: 32px;
-            padding: 0 15px;
-            border-radius: 6px;
-            border: solid 1px var(--el-border-color);
-        }
+.nav-group + .nav-group {
+    margin-top: 22px;
+}
+
+.section-label {
+    padding: 0 12px 7px;
+    color: #929b98;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.nav-menu {
+    border-right: 0;
+    background: transparent;
+}
+
+:deep(.el-menu-item) {
+    height: 42px;
+    margin: 3px 0;
+    border-radius: 6px;
+    color: #505a57;
+}
+
+:deep(.el-menu-item:hover) {
+    background: #f1f5f3;
+}
+
+:deep(.el-menu-item.is-active) {
+    color: #126849;
+    background: #e9f4ef;
+    font-weight: 700;
+}
+
+.admin-stage {
+    min-width: 0;
+}
+
+.admin-header {
+    height: 72px;
+    padding: 0 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    border-bottom: 1px solid #dde2e5;
+    background: rgba(255, 255, 255, .96);
+    box-sizing: border-box;
+}
+
+.page-heading {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    line-height: 1.25;
+
+    span {
+        color: #929b98;
+        font-size: 11px;
+    }
+
+    strong {
+        margin-top: 3px;
+        color: #202825;
+        font-size: 17px;
+    }
+}
+
+:deep(.user-info) {
+    width: auto;
+}
+
+.admin-main {
+    height: calc(100vh - 72px);
+    padding: 0;
+    overflow: hidden;
+    background: #f4f6f5;
+}
+
+.main-scrollbar {
+    height: 100%;
+}
+
+:deep(.el-scrollbar__view) {
+    min-height: 100%;
+}
+
+:deep(.user-admin),
+:deep(.email-admin),
+:deep(.forum-admin) {
+    max-width: 1320px;
+    margin: 0 auto;
+    padding: 28px;
+    box-sizing: border-box;
+}
+
+.admin-page-enter-active,
+.admin-page-leave-active {
+    transition: opacity .16s ease, transform .16s ease;
+}
+
+.admin-page-enter-from,
+.admin-page-leave-to {
+    opacity: 0;
+    transform: translateY(4px);
+}
+
+.dark {
+    .admin-aside,
+    .admin-header {
+        border-color: #343a38;
+        background: #1d211f;
+    }
+
+    .brand {
+        border-color: #343a38;
+    }
+
+    .brand,
+    .page-heading strong {
+        color: #edf1ef;
+    }
+
+    .admin-main {
+        background: #171a19;
+    }
+
+}
+
+:global(.dark) :deep(.el-menu-item:hover) {
+    background: #282e2b;
+}
+
+:global(.dark) :deep(.el-menu-item.is-active) {
+    color: #80d7b4;
+    background: #213d31;
+}
+
+@media (max-width: 820px) {
+    .admin-aside {
+        width: 72px !important;
+    }
+
+    .brand {
+        padding: 0;
+        justify-content: center;
+    }
+
+    .brand-copy,
+    .section-label,
+    .menu-label {
+        display: none;
+    }
+
+    .admin-nav {
+        padding: 14px 9px;
+    }
+
+    :deep(.el-menu-item) {
+        padding: 0 !important;
+        justify-content: center;
+    }
+
+    :deep(.el-menu-item .el-icon) {
+        margin: 0;
+    }
+
+    .admin-header {
+        padding: 0 16px;
+    }
+
+    :deep(.user-info .profile) {
+        display: none;
+    }
+
+    :deep(.user-info) {
+        gap: 10px;
+    }
+
+    :deep(.user-admin),
+    :deep(.email-admin),
+    :deep(.forum-admin) {
+        padding: 18px;
+    }
+}
+
+@media (max-width: 560px) {
+    .page-heading span,
+    :deep(.user-info > .el-button) {
+        display: none;
+    }
+
+    .page-heading strong {
+        margin-top: 0;
+        font-size: 15px;
     }
 }
 </style>

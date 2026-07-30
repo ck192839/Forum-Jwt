@@ -47,7 +47,8 @@ public class FlowLimitingFilter extends HttpFilter {
                             HttpServletResponse response,
                             FilterChain chain) throws IOException, ServletException {
         String address = request.getRemoteAddr();
-        if (!"OPTIONS".equals(request.getMethod()) && !tryCount(address))
+        if (!"OPTIONS".equals(request.getMethod())
+                && !tryCount(address, request.getRequestURI()))
             this.writeBlockMessage(response);
         else
             chain.doFilter(request, response);
@@ -56,13 +57,14 @@ public class FlowLimitingFilter extends HttpFilter {
     /**
      * 尝试对指定IP地址请求计数，如果被限制则无法继续访问
      * @param address 请求IP地址
+     * @param requestUri 请求路径
      * @return 是否操作成功
      */
-    private boolean tryCount(String address) {
+    private boolean tryCount(String address, String requestUri) {
         synchronized (address.intern()) {
             if(template.hasKey(Const.FLOW_LIMIT_BLOCK + address))
                 return false;
-            String counterKey = Const.FLOW_LIMIT_COUNTER + address;
+            String counterKey = Const.FLOW_LIMIT_COUNTER + address + ":" + requestUri;
             String blockKey = Const.FLOW_LIMIT_BLOCK + address;
             return utils.limitPeriodCheck(counterKey, blockKey, block, limit, period);
         }

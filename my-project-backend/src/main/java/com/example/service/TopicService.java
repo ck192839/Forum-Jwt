@@ -23,19 +23,19 @@ public interface TopicService extends IService<Topic> {
     JSONObject listAllTopicByPage(int page, int type, String keyword);
     List<TopicPreviewVO> listTopicByPage(int page, int type);
     List<TopicTopVO> listTopTopics();
-    TopicDetailVO getTopic(int tid,int uid);//获取主题详情
+    TopicDetailVO getTopic(int tid,int uid);             //获取主题详情
     void interact(Interact interact, boolean state);
-    List<TopicPreviewVO> listTopicCollects(int uid); //获取用户收藏的帖子
-    String updateTopic(int uid, TopicUpdateVO vo);//更新主题
-    String createComment(int uid, AddCommentVO vo);//添加评论
-    List<CommentVO> comments(int tid,int pageNumber);//获取评论
-    void deleteComment(int id,int uid);//删除评论
-    void deleteTopic(int id);//删除帖子
+    List<TopicPreviewVO> listTopicCollects(int uid);     //获取用户收藏的帖子
+    String updateTopic(int uid, TopicUpdateVO vo);      //更新主题
+    String createComment(int uid, AddCommentVO vo);      //添加评论
+    List<CommentVO> comments(int tid,int pageNumber);   //获取评论
+    void deleteComment(int id,int uid);                    //删除评论
+    void deleteTopic(int id);                           //删除帖子
     void deleteTopic(int tid, int uid);
-    void setTopicTop(int tid, boolean top);//设置帖子置顶
-    void setTopicLocked(int tid, boolean locked);//设置帖子锁定
+    void setTopicTop(int tid, boolean top);             //设置帖子置顶
+    void setTopicLocked(int tid, boolean locked);      //设置帖子锁定
     void setTopicInvisible(int tid, boolean invisible);//设置帖子是否可见设置为true表示不可见
-    List<TopicVO> listTopicByUser(int uid);//获取用户发布的帖子
+    List<TopicVO> listTopicByUser(int uid);            //获取用户发布的帖子
     List<TopicSearchVO> searchTopic(String keyword);
 
 
