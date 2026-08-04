@@ -29,7 +29,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-public final class ForumReActAgent {
+public final class ForumReActAgent implements AgentRunner {
     private static final long CANCELLATION_POLL_NANOS = TimeUnit.MILLISECONDS.toNanos(50);
     private static final Set<String> CITATION_TOOLS = Set.of(
             "search_similar_topics",
@@ -91,6 +91,7 @@ public final class ForumReActAgent {
         this.timeout = timeout;
     }
 
+    @Override
     public AgentTerminalResult run(
             AgentRunRequest request,
             AgentCancellationToken cancellation,
