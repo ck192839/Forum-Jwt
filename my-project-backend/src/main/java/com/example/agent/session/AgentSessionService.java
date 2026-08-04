@@ -8,6 +8,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Optional;
 
 @Service
 public class AgentSessionService {
@@ -48,6 +49,14 @@ public class AgentSessionService {
     @Transactional(readOnly = true)
     public List<AgentSession> listRecent(int uid) {
         return sessionMapper.selectRecentNonExpired(uid, Timestamp.from(clock.instant()), 10);
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<AgentSession> findMostRecentActive(int uid) {
+        return Optional.ofNullable(sessionMapper.selectMostRecentActiveNonExpired(
+                uid,
+                Timestamp.from(clock.instant())
+        ));
     }
 
     @Transactional(readOnly = true)

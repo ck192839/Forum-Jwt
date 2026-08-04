@@ -43,6 +43,20 @@ public interface AgentSessionMapper extends BaseMapper<AgentSession> {
     @Select("""
             SELECT id, uid, status, created_at, updated_at, expires_at
             FROM agent_session
+            WHERE uid = #{uid}
+              AND status = 'ACTIVE'
+              AND expires_at > #{now}
+            ORDER BY updated_at DESC, id DESC
+            LIMIT 1
+            """)
+    AgentSession selectMostRecentActiveNonExpired(
+            @Param("uid") int uid,
+            @Param("now") Timestamp now
+    );
+
+    @Select("""
+            SELECT id, uid, status, created_at, updated_at, expires_at
+            FROM agent_session
             WHERE id = #{sessionId} AND uid = #{uid}
             """)
     AgentSession selectOwnedById(@Param("sessionId") long sessionId, @Param("uid") int uid);

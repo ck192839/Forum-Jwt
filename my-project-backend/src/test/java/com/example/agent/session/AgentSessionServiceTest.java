@@ -8,6 +8,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -69,6 +70,27 @@ class AgentSessionServiceTest {
 
         assertEquals(List.of(newest, older), result);
         verify(sessionMapper).selectRecentNonExpired(7, now, 10);
+    }
+
+    @Test
+    void findsMostRecentActiveNonExpiredSessionForDefaultRestore() {
+        AgentSessionMapper sessionMapper = mock(AgentSessionMapper.class);
+        AgentSession active = new AgentSession();
+        active.setId(20L);
+        Timestamp now = Timestamp.from(Instant.parse("2026-08-04T12:00:00Z"));
+        when(sessionMapper.selectMostRecentActiveNonExpired(7, now)).thenReturn(active);
+        AgentSessionService service = new AgentSessionService(
+                sessionMapper,
+                mock(AgentMessageMapper.class),
+                mock(AgentEventMapper.class),
+                mock(AgentDraftMapper.class),
+                Clock.fixed(now.toInstant(), ZoneOffset.UTC)
+        );
+
+        Optional<AgentSession> result = service.findMostRecentActive(7);
+
+        assertEquals(Optional.of(active), result);
+        verify(sessionMapper).selectMostRecentActiveNonExpired(7, now);
     }
 
     @Test
