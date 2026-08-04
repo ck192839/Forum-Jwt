@@ -53,4 +53,17 @@ public class RabbitConfiguration {
                 .ttl(3 * 60 * 1000)
                 .build();
     }
+
+    @Bean("topicIndexErrorQueue")
+    public Queue topicIndexErrorQueue() {
+        return QueueBuilder.durable(Const.MQ_TOPIC_INDEX_ERROR).build();
+    }
+
+    @Bean("topicIndexQueue")
+    public Queue topicIndexQueue() {
+        return QueueBuilder.durable(Const.MQ_TOPIC_INDEX)
+                .deadLetterExchange("")
+                .deadLetterRoutingKey(Const.MQ_TOPIC_INDEX_ERROR)
+                .build();
+    }
 }

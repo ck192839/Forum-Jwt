@@ -5,6 +5,7 @@ import com.alibaba.fastjson2.JSONObject;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.example.agent.index.TopicIndexEventPublisher;
 import com.example.entity.dto.*;
 import com.example.entity.es.TopicDocument;
 import com.example.entity.vo.request.AddCommentVO;
@@ -71,6 +72,9 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
     @Resource
     TopicRepository topicRepository;
 
+    @Resource
+    TopicIndexEventPublisher topicIndexEventPublisher;
+
     private Set<Integer> types = null;
 
     @PostConstruct
@@ -115,6 +119,7 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
                 .eq("id", tid)
                 .set("type", type)) > 0) {
             cacheUtils.deleteCachePattern(Const.FORUM_TOPIC_PREVIEW_CACHE + "*");
+            topicIndexEventPublisher.upsert(tid);
         }
     }
 
@@ -138,6 +143,7 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
         topic.createIntro();
         if (this.save(topic)) {
             cacheUtils.deleteCachePattern(Const.FORUM_TOPIC_PREVIEW_CACHE + "*");// 删除所有缓存
+            topicIndexEventPublisher.upsert(topic.getId());
             return null;
         } else {
             return "内部错误,联系管理员";
@@ -165,6 +171,7 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
         if (result == 1) {// todo 自建更新删缓存
             cacheUtils.deleteCachePattern(Const.FORUM_TOPIC_PREVIEW_CACHE + "*");// 删除所有缓存
             cacheUtils.deleteCache(Const.FORUM_TOPIC_TOP_CACHE);
+            topicIndexEventPublisher.upsert(vo.getId());
             return null;
         }
         return "文章被锁定，更新失败";
@@ -244,11 +251,13 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
 
     @Override
     public void deleteTopic(int id) {// 管理端删除帖子
-        baseMapper.deleteById(id);
+        int result = baseMapper.deleteById(id);
         cacheUtils.deleteCachePattern(Const.FORUM_TOPIC_PREVIEW_CACHE + "*");
         cacheUtils.deleteCache(Const.FORUM_TOPIC_TOP_CACHE);
         baseMapper.deleteTopicCollect(id);
         baseMapper.deleteTopicLike(id);
+        if (result > 0)
+            topicIndexEventPublisher.delete(id);
     }
 
     @Override
@@ -261,6 +270,7 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
             cacheUtils.deleteCache(Const.FORUM_TOPIC_TOP_CACHE);
             baseMapper.deleteTopicCollect(tid);
             baseMapper.deleteTopicLike(tid);
+            topicIndexEventPublisher.delete(tid);
         }
     }
 
@@ -288,6 +298,7 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
         if (result > 0) {
             cacheUtils.deleteCachePattern(Const.FORUM_TOPIC_PREVIEW_CACHE + "*");
             cacheUtils.deleteCache(Const.FORUM_TOPIC_TOP_CACHE);
+            topicIndexEventPublisher.upsert(tid);
         }
     }
 

@@ -51,17 +51,28 @@ spring:
     api-host: 'n34y3m4qqe.re.qweatherapi.com'
     key: '${WEATHER_KEY:your-api-key}'
   ai:
+    model:
+      chat: deepseek
+      embedding: openai
     deepseek:
       api-key: '${DEEPSEEK_API_KEY:your-deepseek-api-key}'
       base-url: '${DEEPSEEK_BASE_URL:https://api.deepseek.com}'
       chat:
         options:
           model: '${DEEPSEEK_CHAT_MODEL:deepseek-chat}'
-    dashscope:
+    openai:
       api-key: '${DASHSCOPE_API_KEY:your-dashscope-api-key}'
+      base-url: '${DASHSCOPE_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode}'
+      chat:
+        enabled: false
       embedding:
         options:
           model: '${DASHSCOPE_EMBEDDING_MODEL:text-embedding-v4}'
+    vectorstore:
+      elasticsearch:
+        index-name: forum-topic-vectors
+        initialize-schema: true
+        dimensions: 1024
   web:
     flow:
       limit: 30

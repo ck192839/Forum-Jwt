@@ -22,6 +22,8 @@ public final class Const {
     //消息队列
     public final static String MQ_MAIL = "mail";
     public final static String MQ_ERROR = "error";
+    public final static String MQ_TOPIC_INDEX = "topic-index";
+    public final static String MQ_TOPIC_INDEX_ERROR = "topic-index-error";
     //用户角色
     public final static String ROLE_DEFAULT = "user";
     public final static String ROLE_ADMIN = "admin";
