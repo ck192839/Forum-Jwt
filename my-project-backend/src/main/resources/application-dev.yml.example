@@ -52,8 +52,16 @@ spring:
     key: '${WEATHER_KEY:your-api-key}'
   ai:
     deepseek:
-      api-key: '${DEEPSEEK_API_KEY:your-api-key}'
-      base-url: http://localhost:8099/chat/api/019dded4-a73a-7280-94fb-d5366eb9cce2
+      api-key: '${DEEPSEEK_API_KEY:your-deepseek-api-key}'
+      base-url: '${DEEPSEEK_BASE_URL:https://api.deepseek.com}'
+      chat:
+        options:
+          model: '${DEEPSEEK_CHAT_MODEL:deepseek-chat}'
+    dashscope:
+      api-key: '${DASHSCOPE_API_KEY:your-dashscope-api-key}'
+      embedding:
+        options:
+          model: '${DASHSCOPE_EMBEDDING_MODEL:text-embedding-v4}'
   web:
     verify:
       mail-limit: 60
