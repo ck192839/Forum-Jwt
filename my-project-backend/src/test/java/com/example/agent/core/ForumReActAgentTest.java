@@ -17,6 +17,8 @@ import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.deepseek.DeepSeekChatOptions;
+import org.springframework.ai.deepseek.api.ResponseFormat;
 import org.springframework.ai.model.tool.ToolCallingManager;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.method.MethodToolCallbackProvider;
@@ -70,6 +72,55 @@ class ForumReActAgentTest {
     }
 
     @Test
+    void repairsAnInvalidTerminalFormatWithinTheRunBudget() {
+        Deque<ChatResponse> responses = new ArrayDeque<>();
+        responses.add(response("""
+                ```json
+                {"type":"QUESTION","question":"Who is the intended audience?"}
+                ```
+                """));
+        responses.add(response("""
+                {"type":"QUESTION","question":"Who is the intended audience?"}
+                """));
+        List<Prompt> prompts = new ArrayList<>();
+        ChatModel model = prompt -> {
+            prompts.add(prompt);
+            return responses.removeFirst();
+        };
+        ForumReActAgent agent = agent(model, emptyTools(), 8, Duration.ofSeconds(2));
+
+        AgentTerminalResult result = agent.run(
+                new AgentRunRequest("Help me write a post", 3, List.of()),
+                new AgentCancellationToken(),
+                AgentRunObserver.NOOP
+        );
+
+        assertInstanceOf(AgentQuestionResult.class, result);
+        assertEquals(2, prompts.size());
+        assertTrue(prompts.get(1).getInstructions().stream()
+                .anyMatch(message -> message.getText().contains("without Markdown fences")));
+    }
+
+    @Test
+    void rejectsAfterTwoInvalidTerminalRepairAttempts() {
+        AtomicInteger modelCalls = new AtomicInteger();
+        ChatModel model = prompt -> {
+            modelCalls.incrementAndGet();
+            return response("```json\n{\"type\":\"QUESTION\",\"question\":\"Need details\"}\n```");
+        };
+        ForumReActAgent agent = agent(model, emptyTools(), 8, Duration.ofSeconds(2));
+
+        AgentRunException exception = assertThrows(AgentRunException.class, () -> agent.run(
+                new AgentRunRequest("Write", 1, List.of()),
+                new AgentCancellationToken(),
+                AgentRunObserver.NOOP
+        ));
+
+        assertEquals(AgentRunFailure.INVALID_RESPONSE, exception.failure());
+        assertEquals(3, modelCalls.get());
+    }
+
+    @Test
     void executesToolsAndAllowsOnlyToolReturnedCitations() {
         Deque<ChatResponse> responses = new ArrayDeque<>();
         responses.add(toolCall("call-1", "search_similar_topics", "{\"query\":\"network issue\"}"));
@@ -105,6 +156,36 @@ class ForumReActAgentTest {
         assertEquals(List.of("search_similar_topics", "validate_draft"), observer.started);
         assertEquals(List.of("search_similar_topics", "validate_draft"), observer.completed);
         assertTrue(prompts.get(1).getInstructions().stream().anyMatch(ToolResponseMessage.class::isInstance));
+    }
+
+    @Test
+    void usesNativeJsonObjectResponseFormatForToolAndTerminalCalls() {
+        Deque<ChatResponse> responses = new ArrayDeque<>();
+        responses.add(toolCall("call-1", "list_topic_types", "{}"));
+        responses.add(response("""
+                {"type":"QUESTION","question":"Which section should this target?"}
+                """));
+        List<Prompt> prompts = new ArrayList<>();
+        ChatModel model = prompt -> {
+            prompts.add(prompt);
+            return responses.removeFirst();
+        };
+        ForumReActAgent agent = agent(model, emptyTools(), 8, Duration.ofSeconds(2));
+
+        agent.run(
+                new AgentRunRequest("Help me write a post", 1, List.of()),
+                new AgentCancellationToken(),
+                AgentRunObserver.NOOP
+        );
+
+        assertEquals(2, prompts.size());
+        for (Prompt prompt : prompts) {
+            DeepSeekChatOptions options = assertInstanceOf(
+                    DeepSeekChatOptions.class,
+                    prompt.getOptions()
+            );
+            assertEquals(ResponseFormat.Type.JSON_OBJECT, options.getResponseFormat().getType());
+        }
     }
 
     @Test
@@ -240,6 +321,33 @@ class ForumReActAgentTest {
         assertTrue(system.contains("untrusted"));
         assertTrue(system.contains("never publish"));
         assertTrue(system.contains("Do not reveal chain-of-thought"));
+    }
+
+    @Test
+    void systemPromptRequiresAQuestionWhenCriticalFactsAreMissing() {
+        List<Prompt> prompts = new ArrayList<>();
+        ChatModel model = prompt -> {
+            prompts.add(prompt);
+            return response("{\"type\":\"QUESTION\",\"question\":\"What time and location should be used?\"}");
+        };
+        ForumReActAgent agent = agent(model, emptyTools(), 8, Duration.ofSeconds(2));
+
+        agent.run(
+                new AgentRunRequest("Write an event post, but the time and location are unknown", 1, List.of()),
+                new AgentCancellationToken(),
+                AgentRunObserver.NOOP
+        );
+
+        String system = prompts.get(0).getInstructions().stream()
+                .filter(SystemMessage.class::isInstance)
+                .findFirst()
+                .orElseThrow()
+                .getText();
+        assertTrue(system.contains("critical facts"));
+        assertTrue(system.contains("type field is \"QUESTION\""));
+        assertTrue(system.contains("QUESTION is an output type, not a tool name"));
+        assertTrue(system.contains("Never invent placeholders"));
+        assertTrue(system.contains("Do not ask for optional details"));
     }
 
     private ForumReActAgent agent(

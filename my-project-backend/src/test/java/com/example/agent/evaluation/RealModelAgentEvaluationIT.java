@@ -59,7 +59,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class RealModelAgentEvaluationIT {
     private static final String DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com";
     private static final String DEFAULT_DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode";
