@@ -9,8 +9,8 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -19,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SseEmitterAgentEventSinkTest {
@@ -85,49 +86,51 @@ class SseEmitterAgentEventSinkTest {
     }
 
     @Test
-    void serializesSendWithEveryTerminationPathAndCancelsAtMostOnce() throws Exception {
-        for (Termination termination : Termination.values()) {
-            BlockingEmitter emitter = new BlockingEmitter();
-            AtomicInteger cancellations = new AtomicInteger();
-            SseEmitterAgentEventSink sink = new SseEmitterAgentEventSink(emitter, cancellations::incrementAndGet);
-            AtomicReference<Throwable> sendFailure = new AtomicReference<>();
-            Thread sender = new Thread(() -> {
-                try {
-                    sink.emit(AgentSseEventType.MESSAGE_DELTA, "run-1:1", new MessageDeltaPayload("text"));
-                } catch (Throwable throwable) {
-                    sendFailure.set(throwable);
-                }
-            });
-            sender.start();
-            assertTrue(emitter.sendEntered.await(1, TimeUnit.SECONDS));
+    void sendAndErrorCallbackWithReverseSpringLockOrderDoNotDeadlock() throws Exception {
+        ReverseLockEmitter emitter = new ReverseLockEmitter();
+        AtomicInteger cancellations = new AtomicInteger();
+        SseEmitterAgentEventSink sink = new SseEmitterAgentEventSink(emitter, cancellations::incrementAndGet);
+        CountDownLatch senderFinished = new CountDownLatch(1);
+        CountDownLatch errorFinished = new CountDownLatch(1);
+        Thread errorThread = daemonThread(() -> {
+            emitter.springWriteLock.lock();
+            try {
+                emitter.errorLockHeld.countDown();
+                await(emitter.allowErrorCallback);
+                emitter.triggerError();
+            } finally {
+                emitter.springWriteLock.unlock();
+                errorFinished.countDown();
+            }
+        });
+        Thread senderThread = daemonThread(() -> {
+            try {
+                sink.emit(AgentSseEventType.MESSAGE_DELTA, "run-1:1", new MessageDeltaPayload("text"));
+            } finally {
+                senderFinished.countDown();
+            }
+        });
 
-            CountDownLatch terminationFinished = new CountDownLatch(1);
-            Thread terminator = new Thread(() -> {
-                try {
-                    termination.invoke(sink, emitter);
-                } finally {
-                    terminationFinished.countDown();
-                }
-            });
-            terminator.start();
-            boolean terminatedDuringSend = terminationFinished.await(200, TimeUnit.MILLISECONDS);
-            emitter.allowSendToFinish.countDown();
-            sender.join(1_000);
-            terminator.join(1_000);
-
-            assertFalse(terminatedDuringSend, termination + " must wait for the active send");
-            assertFalse(emitter.terminalDuringSend.get(), termination + " reached the emitter during send");
-            assertFalse(sender.isAlive());
-            assertFalse(terminator.isAlive());
-            assertNull(sendFailure.get());
-            int expectedCancellations = termination == Termination.COMPLETE ? 0 : 1;
-            assertEquals(expectedCancellations, cancellations.get(), termination.toString());
-
-            emitter.triggerTimeout();
-            emitter.triggerError();
-            emitter.triggerCompletion();
-            assertEquals(expectedCancellations, cancellations.get(), termination + " cancelled more than once");
+        errorThread.start();
+        assertTrue(emitter.errorLockHeld.await(1, TimeUnit.SECONDS));
+        senderThread.start();
+        assertTrue(emitter.sendEntered.await(1, TimeUnit.SECONDS));
+        emitter.allowErrorCallback.countDown();
+        boolean completedWithoutDeadlock;
+        try {
+            completedWithoutDeadlock = senderFinished.await(500, TimeUnit.MILLISECONDS)
+                    && errorFinished.await(500, TimeUnit.MILLISECONDS);
+        } finally {
+            senderThread.interrupt();
+            emitter.allowErrorCallback.countDown();
+            senderThread.join(1_000);
+            errorThread.join(1_000);
         }
+
+        assertTrue(completedWithoutDeadlock, "send and onError formed an AB-BA deadlock");
+        assertFalse(senderThread.isAlive());
+        assertFalse(errorThread.isAlive());
+        assertEquals(1, cancellations.get());
     }
 
     @Test
@@ -147,33 +150,23 @@ class SseEmitterAgentEventSinkTest {
         assertSame(failure, emitter.error);
     }
 
-    private enum Termination {
-        COMPLETE {
-            @Override
-            void invoke(SseEmitterAgentEventSink sink, BlockingEmitter emitter) {
-                sink.complete();
-            }
-        },
-        TIMEOUT {
-            @Override
-            void invoke(SseEmitterAgentEventSink sink, BlockingEmitter emitter) {
-                emitter.triggerTimeout();
-            }
-        },
-        ERROR {
-            @Override
-            void invoke(SseEmitterAgentEventSink sink, BlockingEmitter emitter) {
-                emitter.triggerError();
-            }
-        },
-        COMPLETION {
-            @Override
-            void invoke(SseEmitterAgentEventSink sink, BlockingEmitter emitter) {
-                emitter.triggerCompletion();
-            }
-        };
+    @Test
+    void programmingRuntimeFailureFromSendPropagatesWithoutCancellation() {
+        RecordingEmitter emitter = new RecordingEmitter();
+        NullPointerException failure = new NullPointerException("programming error");
+        emitter.runtimeSendFailure = failure;
+        AtomicInteger cancellations = new AtomicInteger();
+        SseEmitterAgentEventSink sink = new SseEmitterAgentEventSink(emitter, cancellations::incrementAndGet);
 
-        abstract void invoke(SseEmitterAgentEventSink sink, BlockingEmitter emitter);
+        NullPointerException thrown = assertThrows(NullPointerException.class, () -> sink.emit(
+                AgentSseEventType.MESSAGE_DELTA,
+                "run-1:1",
+                new MessageDeltaPayload("text")
+        ));
+
+        assertSame(failure, thrown);
+        assertEquals(0, cancellations.get());
+        assertNull(emitter.error);
     }
 
     private static final class RecordingEmitter extends SseEmitter {
@@ -251,48 +244,42 @@ class SseEmitterAgentEventSinkTest {
         }
     }
 
-    private static final class BlockingEmitter extends SseEmitter {
-        private final CountDownLatch sendEntered = new CountDownLatch(1);
-        private final CountDownLatch allowSendToFinish = new CountDownLatch(1);
-        private final AtomicBoolean sending = new AtomicBoolean();
-        private final AtomicBoolean terminalDuringSend = new AtomicBoolean();
-        private Runnable timeoutHandler;
-        private Consumer<Throwable> errorHandler;
-        private Runnable completionHandler;
+    private static Thread daemonThread(Runnable task) {
+        Thread thread = new Thread(task);
+        thread.setDaemon(true);
+        return thread;
+    }
 
-        private BlockingEmitter() {
+    private static void await(CountDownLatch latch) {
+        try {
+            latch.await();
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError(exception);
+        }
+    }
+
+    private static final class ReverseLockEmitter extends SseEmitter {
+        private final ReentrantLock springWriteLock = new ReentrantLock();
+        private final CountDownLatch errorLockHeld = new CountDownLatch(1);
+        private final CountDownLatch sendEntered = new CountDownLatch(1);
+        private final CountDownLatch allowErrorCallback = new CountDownLatch(1);
+        private Consumer<Throwable> errorHandler;
+
+        private ReverseLockEmitter() {
             super(1_000L);
         }
 
         @Override
         public void send(SseEventBuilder builder) throws IOException {
-            sending.set(true);
             sendEntered.countDown();
             try {
-                if (!allowSendToFinish.await(2, TimeUnit.SECONDS)) {
-                    throw new IOException("test send timed out");
-                }
+                springWriteLock.lockInterruptibly();
             } catch (InterruptedException exception) {
                 Thread.currentThread().interrupt();
                 throw new IOException(exception);
-            } finally {
-                sending.set(false);
             }
-        }
-
-        @Override
-        public void complete() {
-            recordTerminalCall();
-        }
-
-        @Override
-        public void completeWithError(Throwable ex) {
-            recordTerminalCall();
-        }
-
-        @Override
-        public void onTimeout(Runnable callback) {
-            timeoutHandler = callback;
+            springWriteLock.unlock();
         }
 
         @Override
@@ -300,27 +287,8 @@ class SseEmitterAgentEventSinkTest {
             errorHandler = callback;
         }
 
-        @Override
-        public void onCompletion(Runnable callback) {
-            completionHandler = callback;
-        }
-
-        void triggerTimeout() {
-            timeoutHandler.run();
-        }
-
         void triggerError() {
             errorHandler.accept(new IOException("client disconnected"));
-        }
-
-        void triggerCompletion() {
-            completionHandler.run();
-        }
-
-        private void recordTerminalCall() {
-            if (sending.get()) {
-                terminalDuringSend.set(true);
-            }
         }
     }
 }
