@@ -9,12 +9,6 @@ spring:
     username: admin
     password: ${RABBIT_PASSWORD:your-password}
     virtual-host: /
-    listener:
-      simple:
-       retry:
-         enabled: true
-         max-attempts: 3
-         initial-interval: 1000ms
   elasticsearch:
     uris: localhost:9200
     username: elastic

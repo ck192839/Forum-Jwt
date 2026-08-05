@@ -8,6 +8,7 @@ import java.util.Map;
 
 public final class ReciprocalRankFusion {
     private static final double RANK_CONSTANT = 60.0;
+    private static final int MAX_HITS_PER_RETRIEVER = 20;
 
     private ReciprocalRankFusion() {
     }
@@ -38,7 +39,8 @@ public final class ReciprocalRankFusion {
             List<TopicSearchHit> hits,
             RetrievalSource source
     ) {
-        for (int index = 0; index < hits.size(); index++) {
+        int hitCount = Math.min(hits.size(), MAX_HITS_PER_RETRIEVER);
+        for (int index = 0; index < hitCount; index++) {
             TopicSearchHit hit = hits.get(index);
             Accumulator accumulator = merged.computeIfAbsent(hit.topicId(), ignored -> new Accumulator(hit));
             accumulator.score += 1.0 / (RANK_CONSTANT + index + 1);

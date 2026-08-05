@@ -16,7 +16,10 @@ public class TopicIndexEventConsumer {
         this.indexer = indexer;
     }
 
-    @RabbitListener(queues = Const.MQ_TOPIC_INDEX)
+    @RabbitListener(
+            queues = Const.MQ_TOPIC_INDEX,
+            containerFactory = "topicIndexRabbitListenerContainerFactory"
+    )
     public void handle(TopicIndexEvent event) {
         if (event.action() == TopicIndexAction.DELETE) {
             indexer.delete(event.topicId());

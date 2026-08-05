@@ -28,6 +28,7 @@ import org.springframework.context.annotation.Lazy;
 import org.springframework.data.elasticsearch.core.SearchHit;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
 import java.util.concurrent.Executors;
@@ -98,6 +99,7 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
     }
 
     @Override
+    @Transactional
     public void deleteTopicType(int id) {
         TopicType type = mapper.selectById(id);
         if (mapper.deleteById(id) > 0) {
@@ -114,6 +116,7 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
     }
 
     @Override
+    @Transactional
     public void changeTopicType(int tid, int type) {
         if (baseMapper.update(null, Wrappers.<Topic>update()
                 .eq("id", tid)
@@ -124,6 +127,7 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
     }
 
     @Override
+    @Transactional
     public String createTopic(int uid, TopicCreateVO vo) {// 创建帖子 //todo 自建了title违禁词检查
         if (!textLimitCheck(vo.getContent(), 20000))
             return "内容过多，发文失败";
@@ -152,6 +156,7 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
     }
 
     @Override
+    @Transactional
     public String updateTopic(int uid, TopicUpdateVO vo) {
 
         if (!textLimitCheck(vo.getContent(), 20000))
@@ -250,6 +255,7 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
     }
 
     @Override
+    @Transactional
     public void deleteTopic(int id) {// 管理端删除帖子
         int result = baseMapper.deleteById(id);
         cacheUtils.deleteCachePattern(Const.FORUM_TOPIC_PREVIEW_CACHE + "*");
@@ -261,6 +267,7 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
     }
 
     @Override
+    @Transactional
     public void deleteTopic(int tid, int uid) { // 用户删除自己的帖子
         int result = baseMapper.delete(Wrappers.<Topic>query()
                 .eq("id", tid)
@@ -291,6 +298,7 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
     }
 
     @Override
+    @Transactional
     public void setTopicInvisible(int tid, boolean invisible) {// 设置帖子是否可见设置为true表示不可见
         int result = baseMapper.update(null, Wrappers.<Topic>update()
                 .eq("id", tid)

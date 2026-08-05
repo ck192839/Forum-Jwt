@@ -25,9 +25,11 @@ class HybridTopicSearchServiceTest {
 
     @Test
     void fallsBackToKeywordResultsWhenVectorSearchFails() {
-        TopicSearchHit keyword = new TopicSearchHit(1, "Keyword", "", 1);
+        List<TopicSearchHit> keyword = java.util.stream.IntStream.rangeClosed(1, 8)
+                .mapToObj(id -> new TopicSearchHit(id, "Keyword " + id, "", 1))
+                .toList();
         HybridTopicSearchService service = new HybridTopicSearchService(
-                query -> List.of(keyword),
+                query -> keyword,
                 query -> {
                     throw new IllegalStateException("vector store unavailable");
                 }
@@ -35,7 +37,7 @@ class HybridTopicSearchServiceTest {
 
         List<RankedTopic> result = service.search("network");
 
-        assertEquals(List.of(1), result.stream().map(item -> item.topic().topicId()).toList());
+        assertEquals(List.of(1, 2, 3, 4, 5, 6), result.stream().map(item -> item.topic().topicId()).toList());
         assertEquals(List.of(RetrievalSource.KEYWORD), result.get(0).sources().stream().toList());
     }
 }

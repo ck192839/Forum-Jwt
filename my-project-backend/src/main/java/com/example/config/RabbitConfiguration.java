@@ -2,6 +2,12 @@ package com.example.config;
 
 import com.example.utils.Const;
 import org.springframework.amqp.core.*;
+import org.springframework.amqp.rabbit.config.RetryInterceptorBuilder;
+import org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory;
+import org.springframework.amqp.rabbit.connection.ConnectionFactory;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.amqp.rabbit.retry.MessageRecoverer;
+import org.springframework.amqp.rabbit.retry.RepublishMessageRecoverer;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
 import org.springframework.amqp.support.converter.MessageConverter;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -17,6 +23,29 @@ public class RabbitConfiguration {
     @Bean
     public MessageConverter jsonMessageConverter() {
         return new Jackson2JsonMessageConverter();
+    }
+
+    @Bean("topicIndexMessageRecoverer")
+    public RepublishMessageRecoverer topicIndexMessageRecoverer(RabbitTemplate rabbitTemplate) {
+        return new RepublishMessageRecoverer(rabbitTemplate, "", Const.MQ_TOPIC_INDEX_ERROR);
+    }
+
+    @Bean("topicIndexRabbitListenerContainerFactory")
+    public SimpleRabbitListenerContainerFactory topicIndexRabbitListenerContainerFactory(
+            ConnectionFactory connectionFactory,
+            MessageConverter messageConverter,
+            @Qualifier("topicIndexMessageRecoverer") MessageRecoverer messageRecoverer
+    ) {
+        SimpleRabbitListenerContainerFactory factory = new SimpleRabbitListenerContainerFactory();
+        factory.setConnectionFactory(connectionFactory);
+        factory.setMessageConverter(messageConverter);
+        factory.setDefaultRequeueRejected(false);
+        factory.setAdviceChain(RetryInterceptorBuilder.stateless()
+                .maxAttempts(3)
+                .backOffOptions(100, 2.0, 200)
+                .recoverer(messageRecoverer)
+                .build());
+        return factory;
     }
 
     @Bean("errorQueue")
