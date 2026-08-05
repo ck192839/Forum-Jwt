@@ -27,3 +27,19 @@ npm run dev
 ```sh
 npm run build
 ```
+
+### Forum Agent End-to-End Tests
+
+Install the Chromium revision pinned by `@playwright/test` after installing dependencies, then run the desktop suite:
+
+```sh
+npm run test:e2e:install
+npm run test:e2e
+```
+
+CI must run `npm run test:e2e:install` before `npm run test:e2e`. To use an existing Chrome executable locally, opt in explicitly by setting `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`:
+
+```powershell
+$env:PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH='C:\Program Files\Google\Chrome\Application\chrome.exe'
+npm run test:e2e
+```

@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 const requirement = '帮我写一篇新生校园网使用指南，先检查论坛里是否有重复内容'
+const requestSettleMs = 500
 const draft = {
   title: '新生校园网使用指南',
   topicTypeId: 7,
@@ -13,7 +14,7 @@ const draft = {
 
 test('Agent drafts with duplicate-check evidence and waits for the user to publish', async ({ page }) => {
   const topicCreateRequests = []
-  await installApiFixture(page, topicCreateRequests)
+  const { unexpectedApiRequests } = await installApiFixture(page, topicCreateRequests)
   await authenticate(page)
 
   await page.goto('/index')
@@ -51,16 +52,49 @@ test('Agent drafts with duplicate-check evidence and waits for the user to publi
   await expect(editor.getByRole('textbox', { name: '帖子标题' })).toHaveValue(draft.title)
   await expect(editor.getByRole('combobox', { name: '帖子板块' })).toBeVisible()
   await expect(editor.getByText('校园生活', { exact: true })).toBeVisible()
-  await expect(editor.getByRole('textbox', { name: '帖子正文' })).toContainText('Campus-WiFi')
-  expect(topicCreateRequests).toHaveLength(0)
+  const body = editor.getByRole('textbox', { name: '帖子正文' })
+  await expect(body).toHaveAttribute('aria-multiline', 'true')
+  await expect(body).toContainText('Campus-WiFi')
 
-  await editor.getByRole('button', { name: '立即发表主题' }).click()
-  await expect.poll(() => topicCreateRequests.length).toBe(1)
-  expect(topicCreateRequests[0]).toMatchObject({
+  await page.waitForTimeout(requestSettleMs)
+  expect(topicCreateRequests).toHaveLength(0)
+  expect(unexpectedApiRequests).toEqual([])
+
+  const [publishedRequest] = await Promise.all([
+    page.waitForRequest(request =>
+      request.method() === 'POST' && new URL(request.url()).pathname === '/api/forum/create-topic'
+    ),
+    editor.getByRole('button', { name: '立即发表主题' }).click()
+  ])
+  expect(publishedRequest.postDataJSON()).toMatchObject({
     type: draft.topicTypeId,
     title: draft.title
   })
-  expect(JSON.stringify(topicCreateRequests[0].content)).toContain('Campus-WiFi')
+  expect(JSON.stringify(publishedRequest.postDataJSON().content)).toContain('Campus-WiFi')
+
+  await page.waitForTimeout(requestSettleMs)
+  expect(topicCreateRequests).toHaveLength(1)
+  expect(unexpectedApiRequests).toEqual([])
+})
+
+test('API fixture fails closed for unknown routes', async ({ page }) => {
+  const topicCreateRequests = []
+  const { unexpectedApiRequests } = await installApiFixture(page, topicCreateRequests)
+  await authenticate(page)
+  await page.goto('/index')
+
+  const result = await page.evaluate(async () => {
+    try {
+      const response = await fetch('http://localhost:8080/api/unexpected')
+      return { resolved: true, status: response.status }
+    } catch {
+      return { resolved: false }
+    }
+  })
+
+  expect(result).toEqual({ resolved: false })
+  expect(unexpectedApiRequests).toEqual([{ method: 'GET', path: '/api/unexpected' }])
+  expect(topicCreateRequests).toHaveLength(0)
 })
 
 async function authenticate(page) {
@@ -75,6 +109,7 @@ async function authenticate(page) {
 
 async function installApiFixture(page, topicCreateRequests) {
   let sessionCreated = false
+  const unexpectedApiRequests = []
 
   await page.route('http://localhost:8080/api/**', async route => {
     const request = route.request()
@@ -128,8 +163,15 @@ async function installApiFixture(page, topicCreateRequests) {
       '/api/forum/top-topic': [],
       '/api/forum/weather': { location: {}, now: {}, hourly: [] }
     }
-    return json(route, fixtures[path] ?? [])
+    if (request.method() === 'GET' && Object.hasOwn(fixtures, path)) {
+      return json(route, fixtures[path])
+    }
+
+    unexpectedApiRequests.push({ method: request.method(), path })
+    return route.abort('failed')
   })
+
+  return { unexpectedApiRequests }
 }
 
 function agentEventStream() {

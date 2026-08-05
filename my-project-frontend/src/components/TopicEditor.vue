@@ -86,6 +86,7 @@ function initEditor() {
     const quillRoot = refEditor.value.getQuill().root
     quillRoot?.setAttribute('role', 'textbox')
     quillRoot?.setAttribute('aria-label', '帖子正文')
+    quillRoot?.setAttribute('aria-multiline', 'true')
     if(props.defaultText)
         editor.text = new Delta(JSON.parse(props.defaultText))
     else

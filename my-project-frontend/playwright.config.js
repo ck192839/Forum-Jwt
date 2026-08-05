@@ -1,9 +1,6 @@
 import { defineConfig } from '@playwright/test'
-import { existsSync } from 'node:fs'
 
-const systemChrome = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
 const chromeExecutable = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
-  || (existsSync(systemChrome) ? systemChrome : undefined)
 
 export default defineConfig({
   testDir: './e2e',

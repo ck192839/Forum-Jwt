@@ -7,6 +7,7 @@
     "build": "vite build",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "test:e2e:install": "playwright install chromium",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -26,7 +27,7 @@
     "vue-router": "^4.2.4"
   },
   "devDependencies": {
-    "@playwright/test": "^1.62.1",
+    "@playwright/test": "1.62.1",
     "@vitejs/plugin-vue": "^4.2.3",
     "@vue/test-utils": "^2.4.6",
     "jsdom": "^22.1.0",
