@@ -83,6 +83,9 @@ const aiPreview = reactive({
 function initEditor() {
     editorReady = false
     suppressVersionTracking = true
+    const quillRoot = refEditor.value.getQuill().root
+    quillRoot?.setAttribute('role', 'textbox')
+    quillRoot?.setAttribute('aria-label', '帖子正文')
     if(props.defaultText)
         editor.text = new Delta(JSON.parse(props.defaultText))
     else
@@ -292,6 +295,7 @@ const editorOption = {
 
 <template>
   <el-drawer :model-value="show"
+             aria-label="发布帖子编辑器"
              direction="btt"
              @open="initEditor"
              :close-on-click-modal="false"
@@ -305,7 +309,7 @@ const editorOption = {
     </template>
     <div style="display: flex;gap: 10px">
       <div style="width: 150px">
-        <el-select placeholder="选择主题类型..." value-key="id" v-model="editor.type"
+        <el-select placeholder="选择主题类型..." aria-label="帖子板块" value-key="id" v-model="editor.type"
                    :disabled="!store.forum.types.length" @change="touchEditor">
           <el-option v-for="item in store.forum.types.filter(type => type.id > 0)" :value="item" :label="item.name">
             <div>
@@ -316,7 +320,7 @@ const editorOption = {
         </el-select>
       </div>
       <div style="flex: 1">
-        <el-input v-model="editor.title" placeholder="请输入帖子标题..." :prefix-icon="Document" @input="touchEditor"
+        <el-input v-model="editor.title" aria-label="帖子标题" placeholder="请输入帖子标题..." :prefix-icon="Document" @input="touchEditor"
                   style="height: 100%" maxlength="30"/>
       </div>
     </div>
@@ -353,7 +357,7 @@ const editorOption = {
           <del>{{typeName(aiPreview.data.topicTypeId.before)}}</del>
           <ins>{{typeName(aiPreview.data.topicTypeId.after)}}</ins>
         </div>
-        <div class="diff-body">
+        <div class="diff-body" role="region" aria-label="正文差异">
           <span v-for="(part, index) in aiPreview.data.body" :key="index"
                 :class="{added: part.added, removed: part.removed}">{{part.value}}</span>
         </div>

@@ -139,7 +139,8 @@ watch(editorOptimizationRequest, async request => {
 
             <section v-if="state.timeline.length" class="tool-timeline" aria-label="工具执行状态">
               <div v-for="(tool, index) in state.timeline" :key="`${tool.runId}-${tool.toolName}-${index}`"
-                   class="tool-row">
+                   class="tool-row" role="status"
+                   :aria-label="`${toolLabels[tool.toolName] || tool.toolName}：${tool.status === 'completed' ? '已完成' : '执行中'}`">
                 <Check v-if="tool.status === 'completed'" class="tool-complete"/>
                 <Loading v-else class="spin"/>
                 <span>{{ toolLabels[tool.toolName] || tool.toolName }}</span>
