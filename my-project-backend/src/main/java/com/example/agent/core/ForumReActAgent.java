@@ -2,6 +2,7 @@ package com.example.agent.core;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
@@ -20,6 +21,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -133,6 +135,8 @@ public final class ForumReActAgent implements AgentRunner {
         int toolCallCount = 0;
         int terminalRepairAttempts = 0;
         Set<Integer> knownTopicIds = new HashSet<>();
+        Map<Integer, String> knownTopics = new LinkedHashMap<>();
+        boolean draftValidationAttempted = false;
         ValidatedDraft validatedDraft = null;
 
         while (true) {
@@ -146,6 +150,14 @@ public final class ForumReActAgent implements AgentRunner {
                 throw new AgentRunException(AgentRunFailure.INVALID_RESPONSE, "Model returned no response");
             }
             AssistantMessage output = response.getResult().getOutput();
+            AgentQuestionResult toolEncodedQuestion = toolEncodedQuestion(
+                    output,
+                    request.editorVersion(),
+                    knownTopicIds
+            );
+            if (toolEncodedQuestion != null) {
+                return toolEncodedQuestion;
+            }
             if (!response.hasToolCalls()) {
                 String content = output.getText();
                 try {
@@ -156,9 +168,23 @@ public final class ForumReActAgent implements AgentRunner {
                     );
                     if (result instanceof AgentDraftResult draft
                             && (validatedDraft == null || !validatedDraft.matches(draft))) {
-                        throw new AgentOutputValidationException(
-                                "Draft does not match a successful validate_draft tool call"
-                        );
+                        if (!draftValidationAttempted) {
+                            throw new AgentOutputValidationException(
+                                    "Draft was not checked by validate_draft"
+                            );
+                        }
+                        if (toolCallCount >= maxToolCalls) {
+                            throw new AgentRunException(
+                                    AgentRunFailure.TOOL_LIMIT,
+                                    "Agent exceeded the tool call limit"
+                            );
+                        }
+                        toolCallCount++;
+                        if (!revalidateDraft(draft, observer, cancellation, deadline)) {
+                            throw new AgentOutputValidationException(
+                                    "Draft did not pass validate_draft"
+                            );
+                        }
                     }
                     return result;
                 } catch (AgentOutputValidationException exception) {
@@ -193,12 +219,49 @@ public final class ForumReActAgent implements AgentRunner {
                     output,
                     execution,
                     observer,
-                    knownTopicIds
+                    knownTopicIds,
+                    knownTopics
             );
             if (validation.attempted()) {
+                draftValidationAttempted = true;
                 validatedDraft = validation.draft();
+                if (validatedDraft != null) {
+                    return validatedDraft.toResult(request.editorVersion(), knownTopics);
+                }
             }
             prompt = new Prompt(execution.conversationHistory(), options);
+        }
+    }
+
+    private boolean revalidateDraft(
+            AgentDraftResult draft,
+            AgentRunObserver observer,
+            AgentCancellationToken cancellation,
+            long deadline
+    ) {
+        ToolCallback callback = toolCallbacks.stream()
+                .filter(tool -> "validate_draft".equals(tool.getToolDefinition().name()))
+                .findFirst()
+                .orElseThrow(() -> new AgentRunException(
+                        AgentRunFailure.INVALID_RESPONSE,
+                        "validate_draft tool is unavailable"
+                ));
+        ObjectNode arguments = objectMapper.createObjectNode();
+        arguments.put("title", draft.title());
+        arguments.put("topicTypeId", draft.topicTypeId());
+        arguments.put("bodyMarkdown", draft.bodyMarkdown());
+        String serializedArguments = arguments.toString();
+        observer.toolStarted("validate_draft", serializedArguments);
+        String responseData = executeWithinBudget(
+                () -> callback.call(serializedArguments),
+                cancellation,
+                deadline
+        );
+        observer.toolCompleted("validate_draft", responseData);
+        try {
+            return objectMapper.readTree(responseData).path("valid").asBoolean(false);
+        } catch (Exception ignored) {
+            return false;
         }
     }
 
@@ -206,7 +269,8 @@ public final class ForumReActAgent implements AgentRunner {
             AssistantMessage assistantMessage,
             ToolExecutionResult execution,
             AgentRunObserver observer,
-            Set<Integer> knownTopicIds
+            Set<Integer> knownTopicIds,
+            Map<Integer, String> knownTopics
     ) {
         if (execution.conversationHistory().isEmpty()) {
             return ValidationObservation.notAttempted();
@@ -222,17 +286,75 @@ public final class ForumReActAgent implements AgentRunner {
         for (ToolResponseMessage.ToolResponse response : toolResponse.getResponses()) {
             observer.toolCompleted(response.name(), response.responseData());
             if (CITATION_TOOLS.contains(response.name())) {
-                collectTopicIds(response.responseData(), knownTopicIds);
+                collectTopics(response.responseData(), knownTopicIds, knownTopics);
             }
             if ("validate_draft".equals(response.name())) {
                 validationAttempted = true;
                 validatedDraft = validatedDraft(
-                        callsById.get(response.id()),
+                        matchingToolCall(assistantMessage, callsById.get(response.id()), response),
                         response.responseData()
                 );
             }
         }
         return new ValidationObservation(validationAttempted, validatedDraft);
+    }
+
+    private AgentQuestionResult toolEncodedQuestion(
+            AssistantMessage output,
+            int editorVersion,
+            Set<Integer> knownTopicIds
+    ) {
+        List<AssistantMessage.ToolCall> questionCalls = output.getToolCalls().stream()
+                .filter(call -> "QUESTION".equalsIgnoreCase(call.name()))
+                .toList();
+        if (questionCalls.isEmpty()) {
+            return null;
+        }
+        if (questionCalls.size() != 1 || output.getToolCalls().size() != 1) {
+            throw new AgentRunException(
+                    AgentRunFailure.INVALID_RESPONSE,
+                    "Model mixed a terminal QUESTION with tool calls"
+            );
+        }
+        try {
+            JsonNode arguments = objectMapper.readTree(questionCalls.get(0).arguments());
+            if (!(arguments instanceof ObjectNode object)) {
+                throw new AgentOutputValidationException("QUESTION arguments must be a JSON object");
+            }
+            ObjectNode terminal = object.deepCopy();
+            terminal.put("type", "QUESTION");
+            return (AgentQuestionResult) resultParser.parse(
+                    terminal.toString(),
+                    editorVersion,
+                    knownTopicIds
+            );
+        } catch (AgentOutputValidationException exception) {
+            throw new AgentRunException(
+                    AgentRunFailure.INVALID_RESPONSE,
+                    "Model returned an invalid tool-encoded QUESTION",
+                    exception
+            );
+        } catch (Exception exception) {
+            throw new AgentRunException(
+                    AgentRunFailure.INVALID_RESPONSE,
+                    "Model returned malformed QUESTION arguments",
+                    exception
+            );
+        }
+    }
+
+    private AssistantMessage.ToolCall matchingToolCall(
+            AssistantMessage assistantMessage,
+            AssistantMessage.ToolCall idMatch,
+            ToolResponseMessage.ToolResponse response
+    ) {
+        if (idMatch != null && response.name().equals(idMatch.name())) {
+            return idMatch;
+        }
+        List<AssistantMessage.ToolCall> nameMatches = assistantMessage.getToolCalls().stream()
+                .filter(call -> response.name().equals(call.name()))
+                .toList();
+        return nameMatches.size() == 1 ? nameMatches.get(0) : null;
     }
 
     private ValidatedDraft validatedDraft(AssistantMessage.ToolCall call, String responseData) {
@@ -265,26 +387,39 @@ public final class ForumReActAgent implements AgentRunner {
         return value.textValue();
     }
 
-    private void collectTopicIds(String responseData, Set<Integer> knownTopicIds) {
+    private void collectTopics(
+            String responseData,
+            Set<Integer> knownTopicIds,
+            Map<Integer, String> knownTopics
+    ) {
         try {
-            collectTopicIds(objectMapper.readTree(responseData), knownTopicIds);
+            collectTopics(objectMapper.readTree(responseData), knownTopicIds, knownTopics);
         } catch (Exception ignored) {
             // A malformed tool result cannot authorize a citation.
         }
     }
 
-    private void collectTopicIds(JsonNode node, Set<Integer> knownTopicIds) {
+    private void collectTopics(
+            JsonNode node,
+            Set<Integer> knownTopicIds,
+            Map<Integer, String> knownTopics
+    ) {
         if (node == null) {
             return;
         }
         if (node.isObject()) {
             JsonNode topicId = node.get("topicId");
             if (topicId != null && topicId.canConvertToInt() && topicId.intValue() > 0) {
-                knownTopicIds.add(topicId.intValue());
+                int id = topicId.intValue();
+                knownTopicIds.add(id);
+                JsonNode title = node.get("title");
+                if (title != null && title.isTextual() && !title.textValue().isBlank()) {
+                    knownTopics.putIfAbsent(id, title.textValue().trim());
+                }
             }
-            node.elements().forEachRemaining(child -> collectTopicIds(child, knownTopicIds));
+            node.elements().forEachRemaining(child -> collectTopics(child, knownTopicIds, knownTopics));
         } else if (node.isArray()) {
-            node.elements().forEachRemaining(child -> collectTopicIds(child, knownTopicIds));
+            node.elements().forEachRemaining(child -> collectTopics(child, knownTopicIds, knownTopics));
         }
     }
 
@@ -347,6 +482,14 @@ public final class ForumReActAgent implements AgentRunner {
             return title.equals(draft.title())
                     && topicTypeId == draft.topicTypeId()
                     && bodyMarkdown.equals(draft.bodyMarkdown());
+        }
+
+        private AgentDraftResult toResult(int editorVersion, Map<Integer, String> knownTopics) {
+            List<AgentCitation> citations = knownTopics.entrySet().stream()
+                    .limit(6)
+                    .map(entry -> new AgentCitation(entry.getKey(), entry.getValue()))
+                    .toList();
+            return new AgentDraftResult(title, topicTypeId, bodyMarkdown, citations, editorVersion);
         }
     }
 

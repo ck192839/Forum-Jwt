@@ -20,6 +20,7 @@ import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.deepseek.DeepSeekChatOptions;
 import org.springframework.ai.deepseek.api.ResponseFormat;
 import org.springframework.ai.model.tool.ToolCallingManager;
+import org.springframework.ai.model.tool.ToolExecutionResult;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.method.MethodToolCallbackProvider;
 
@@ -68,6 +69,26 @@ class ForumReActAgentTest {
         );
 
         assertInstanceOf(AgentQuestionResult.class, result);
+        assertEquals(List.of(), observer.started);
+    }
+
+    @Test
+    void treatsAToolEncodedQuestionAsATerminalResult() {
+        ChatModel model = prompt -> toolCall(
+                "call-question",
+                "QUESTION",
+                "{\"question\":\"What time and location should be used?\"}"
+        );
+        RecordingObserver observer = new RecordingObserver();
+        ForumReActAgent agent = agent(model, emptyTools(), 8, Duration.ofSeconds(2));
+
+        AgentQuestionResult result = assertInstanceOf(AgentQuestionResult.class, agent.run(
+                new AgentRunRequest("Help me write an event post", 3, List.of()),
+                new AgentCancellationToken(),
+                observer
+        ));
+
+        assertEquals("What time and location should be used?", result.question());
         assertEquals(List.of(), observer.started);
     }
 
@@ -156,6 +177,111 @@ class ForumReActAgentTest {
         assertEquals(List.of("search_similar_topics", "validate_draft"), observer.started);
         assertEquals(List.of("search_similar_topics", "validate_draft"), observer.completed);
         assertTrue(prompts.get(1).getInstructions().stream().anyMatch(ToolResponseMessage.class::isInstance));
+    }
+
+    @Test
+    void returnsAValidatedDraftWithoutRequestingAnotherModelResponse() {
+        Deque<ChatResponse> responses = new ArrayDeque<>();
+        responses.add(toolCall("call-1", "search_similar_topics", "{\"query\":\"network issue\"}"));
+        responses.add(toolCall(
+                "call-2",
+                "validate_draft",
+                "{\"title\":\"Network troubleshooting\",\"topicTypeId\":3,"
+                        + "\"bodyMarkdown\":\"Try these steps.\"}"
+        ));
+        AtomicInteger modelCalls = new AtomicInteger();
+        ChatModel model = prompt -> {
+            modelCalls.incrementAndGet();
+            return responses.removeFirst();
+        };
+        ForumReActAgent agent = agent(model, toolsReturningTopic(42), 8, Duration.ofSeconds(2));
+
+        AgentDraftResult draft = assertInstanceOf(AgentDraftResult.class, agent.run(
+                new AgentRunRequest("Draft a network help post", 7, List.of()),
+                new AgentCancellationToken(),
+                AgentRunObserver.NOOP
+        ));
+
+        assertEquals(2, modelCalls.get());
+        assertEquals("Network troubleshooting", draft.title());
+        assertEquals(3, draft.topicTypeId());
+        assertEquals("Try these steps.", draft.bodyMarkdown());
+        assertEquals(7, draft.basedOnEditorVersion());
+        assertEquals(List.of(new AgentCitation(42, "Previous guide")), draft.citations());
+    }
+
+    @Test
+    void matchesAUniqueValidationResponseByToolNameWhenItsIdDiffers() {
+        ChatResponse validationCall = toolCall(
+                "model-call-id",
+                "validate_draft",
+                "{\"title\":\"Network troubleshooting\",\"topicTypeId\":3,"
+                        + "\"bodyMarkdown\":\"Try these steps.\"}"
+        );
+        ChatModel model = prompt -> validationCall;
+        ToolResponseMessage responseMessage = ToolResponseMessage.builder()
+                .responses(List.of(new ToolResponseMessage.ToolResponse(
+                        "provider-response-id",
+                        "validate_draft",
+                        "{\"valid\":true,\"errors\":[]}"
+                )))
+                .build();
+        ToolCallingManager manager = mock(ToolCallingManager.class);
+        when(manager.executeToolCalls(
+                org.mockito.ArgumentMatchers.any(Prompt.class),
+                org.mockito.ArgumentMatchers.any(ChatResponse.class)
+        )).thenReturn(ToolExecutionResult.builder()
+                .conversationHistory(List.of(responseMessage))
+                .build());
+        ForumReActAgent agent = agent(
+                model,
+                emptyTools(),
+                manager,
+                8,
+                Duration.ofSeconds(2)
+        );
+
+        AgentDraftResult draft = assertInstanceOf(AgentDraftResult.class, agent.run(
+                new AgentRunRequest("Draft a network help post", 7, List.of()),
+                new AgentCancellationToken(),
+                AgentRunObserver.NOOP
+        ));
+
+        assertEquals("Network troubleshooting", draft.title());
+        assertEquals(7, draft.basedOnEditorVersion());
+    }
+
+    @Test
+    void revalidatesAStrictTerminalDraftAfterAnEarlierValidationFailed() {
+        Deque<ChatResponse> responses = new ArrayDeque<>();
+        responses.add(toolCall(
+                "call-1",
+                "validate_draft",
+                "{\"title\":\"This title is intentionally longer than thirty characters\","
+                        + "\"topicTypeId\":3,\"bodyMarkdown\":\"Try these steps.\"}"
+        ));
+        responses.add(response("""
+                {"type":"DRAFT","title":"Network help","topicTypeId":3,
+                 "bodyMarkdown":"Try these steps.","citations":[],"basedOnEditorVersion":7}
+                """));
+        AtomicInteger modelCalls = new AtomicInteger();
+        ChatModel model = prompt -> {
+            modelCalls.incrementAndGet();
+            return responses.removeFirst();
+        };
+        RecordingObserver observer = new RecordingObserver();
+        ForumReActAgent agent = agent(model, toolsReturningTopic(42), 8, Duration.ofSeconds(2));
+
+        AgentDraftResult draft = assertInstanceOf(AgentDraftResult.class, agent.run(
+                new AgentRunRequest("Draft a network help post", 7, List.of()),
+                new AgentCancellationToken(),
+                observer
+        ));
+
+        assertEquals(2, modelCalls.get());
+        assertEquals("Network help", draft.title());
+        assertEquals(List.of("validate_draft", "validate_draft"), observer.started);
+        assertEquals(List.of("validate_draft", "validate_draft"), observer.completed);
     }
 
     @Test
@@ -356,13 +482,29 @@ class ForumReActAgentTest {
             int maxToolCalls,
             Duration timeout
     ) {
+        return agent(
+                model,
+                tools,
+                ToolCallingManager.builder().build(),
+                maxToolCalls,
+                timeout
+        );
+    }
+
+    private ForumReActAgent agent(
+            ChatModel model,
+            ForumAuthoringTools tools,
+            ToolCallingManager toolCallingManager,
+            int maxToolCalls,
+            Duration timeout
+    ) {
         ToolCallback[] callbacks = MethodToolCallbackProvider.builder()
                 .toolObjects(tools)
                 .build()
                 .getToolCallbacks();
         return new ForumReActAgent(
                 model,
-                ToolCallingManager.builder().build(),
+                toolCallingManager,
                 List.of(callbacks),
                 new AgentTerminalResultParser(new ObjectMapper()),
                 executor(),

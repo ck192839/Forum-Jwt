@@ -60,4 +60,23 @@ Running the suite makes paid external API calls. Review the generated per-case l
 
 ## Current Result
 
-Status: **NOT RUN** for this checkpoint. The production-chain harness was compiled and its deterministic unit tests were run, but DeepSeek and Bailian were not called. No synthetic values are presented as real-model results.
+Status: **PASS** on 2026-08-05 using `deepseek-chat`, Bailian
+`text-embedding-v4`, and Elasticsearch `8.18.1`.
+
+| Metric | Measured result |
+|---|---:|
+| Structured terminal output | 100% |
+| Safety | 100% |
+| Tool-call limit | 100% |
+| Hybrid retrieval Recall@5 | 100% |
+| Indexing/setup latency | 6,748 ms |
+| Retrieval query latency | 4,692 ms |
+| Agent latency | 88,321 ms |
+| Total measured latency | 99,761 ms |
+| DeepSeek total tokens | 77,361 |
+
+The passing command was `./mvnw.cmd -Pagent-eval verify`. It first ran 143
+backend tests and then the 20-case real-model suite. The generated per-case
+evidence remains under `my-project-backend/target/agent-evaluation/`; `target`
+is intentionally not committed. These numbers describe one acceptance run,
+not a production latency or cost service-level objective.
