@@ -8,10 +8,12 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.annotation.EnableRabbit;
+import org.springframework.amqp.rabbit.connection.CachingConnectionFactory.ConfirmType;
 import org.springframework.amqp.rabbit.connection.CachingConnectionFactory;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitAdmin;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.amqp.rabbit.listener.RabbitListenerEndpointRegistry;
 import org.springframework.amqp.support.converter.MessageConverter;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
@@ -28,6 +30,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.reset;
@@ -56,6 +59,9 @@ class TopicIndexRabbitIntegrationTest {
 
     @Autowired
     TopicVectorIndexer indexer;
+
+    @Autowired
+    RabbitListenerEndpointRegistry listenerRegistry;
 
     @BeforeEach
     void resetQueuesAndCollaborators() {
@@ -100,6 +106,24 @@ class TopicIndexRabbitIntegrationTest {
         assertTrue(headers.containsKey("__TypeId__"));
     }
 
+    @Test
+    void reportsFailureWhenTheBrokerCannotRouteAnIndexEvent() {
+        listenerRegistry.stop();
+        try {
+            assertTrue(rabbitAdmin.deleteQueue(Const.MQ_TOPIC_INDEX));
+
+            TopicIndexEventPublisher publisher = new TopicIndexEventPublisher(rabbitTemplate);
+
+            assertThrows(
+                    org.springframework.amqp.core.AmqpMessageReturnedException.class,
+                    () -> publisher.upsert(100)
+            );
+        } finally {
+            rabbitAdmin.initialize();
+            listenerRegistry.start();
+        }
+    }
+
     @Configuration(proxyBeanMethods = false)
     @EnableRabbit
     @Import(RabbitConfiguration.class)
@@ -112,6 +136,8 @@ class TopicIndexRabbitIntegrationTest {
             );
             factory.setUsername(RABBIT.getAdminUsername());
             factory.setPassword(RABBIT.getAdminPassword());
+            factory.setPublisherConfirmType(ConfirmType.CORRELATED);
+            factory.setPublisherReturns(true);
             return factory;
         }
 
@@ -124,6 +150,7 @@ class TopicIndexRabbitIntegrationTest {
         RabbitTemplate rabbitTemplate(ConnectionFactory connectionFactory, MessageConverter converter) {
             RabbitTemplate template = new RabbitTemplate(connectionFactory);
             template.setMessageConverter(converter);
+            template.setMandatory(true);
             template.setReceiveTimeout(15_000);
             return template;
         }

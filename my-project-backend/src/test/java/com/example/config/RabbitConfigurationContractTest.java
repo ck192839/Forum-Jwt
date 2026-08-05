@@ -61,6 +61,12 @@ class RabbitConfigurationContractTest {
         assertNoGlobalRabbitRetry("/application-dev.yml.example");
     }
 
+    @Test
+    void exampleConfigurationEnablesPublisherConfirmsAndReturns() {
+        assertPublisherReliability("/application.yml.example");
+        assertPublisherReliability("/application-dev.yml.example");
+    }
+
     private void assertNoGlobalRabbitRetry(String resource) {
         try (InputStream stream = getClass().getResourceAsStream(resource)) {
             Map<String, Object> root = new Yaml().load(stream);
@@ -70,6 +76,19 @@ class RabbitConfigurationContractTest {
             Map<String, Object> simple = map(listener.get("simple"));
 
             assertFalse(simple.containsKey("retry"), resource + " must not alter every listener");
+        } catch (java.io.IOException exception) {
+            throw new IllegalStateException(exception);
+        }
+    }
+
+    private void assertPublisherReliability(String resource) {
+        try (InputStream stream = getClass().getResourceAsStream(resource)) {
+            Map<String, Object> root = new Yaml().load(stream);
+            Map<String, Object> spring = map(root.get("spring"));
+            Map<String, Object> rabbit = map(spring.get("rabbitmq"));
+
+            assertEquals("correlated", rabbit.get("publisher-confirm-type"), resource);
+            assertEquals(true, rabbit.get("publisher-returns"), resource);
         } catch (java.io.IOException exception) {
             throw new IllegalStateException(exception);
         }

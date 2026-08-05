@@ -3,6 +3,7 @@ package com.example.agent.index;
 import com.example.utils.Const;
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.AmqpConnectException;
+import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.AbstractPlatformTransactionManager;
@@ -11,6 +12,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -19,7 +23,7 @@ class TopicIndexEventPublisherTest {
 
     @Test
     void sendsOnlyAfterTheSurroundingTransactionCommits() {
-        RabbitTemplate rabbitTemplate = mock(RabbitTemplate.class);
+        RabbitTemplate rabbitTemplate = confirmedRabbitTemplate();
         TopicIndexEventPublisher publisher = new TopicIndexEventPublisher(rabbitTemplate);
 
         transactionTemplate().executeWithoutResult(status -> {
@@ -28,14 +32,15 @@ class TopicIndexEventPublisherTest {
         });
 
         verify(rabbitTemplate).convertAndSend(
-                Const.MQ_TOPIC_INDEX,
-                new TopicIndexEvent(7, TopicIndexAction.UPSERT)
+                eq(Const.MQ_TOPIC_INDEX),
+                eq(new TopicIndexEvent(7, TopicIndexAction.UPSERT)),
+                any(CorrelationData.class)
         );
     }
 
     @Test
     void discardsTheEventWhenTheSurroundingTransactionRollsBack() {
-        RabbitTemplate rabbitTemplate = mock(RabbitTemplate.class);
+        RabbitTemplate rabbitTemplate = confirmedRabbitTemplate();
         TopicIndexEventPublisher publisher = new TopicIndexEventPublisher(rabbitTemplate);
 
         transactionTemplate().executeWithoutResult(status -> {
@@ -48,23 +53,26 @@ class TopicIndexEventPublisherTest {
 
     @Test
     void sendsImmediatelyWhenThereIsNoTransaction() {
-        RabbitTemplate rabbitTemplate = mock(RabbitTemplate.class);
+        RabbitTemplate rabbitTemplate = confirmedRabbitTemplate();
         TopicIndexEventPublisher publisher = new TopicIndexEventPublisher(rabbitTemplate);
 
         publisher.upsert(9);
 
         verify(rabbitTemplate).convertAndSend(
-                Const.MQ_TOPIC_INDEX,
-                new TopicIndexEvent(9, TopicIndexAction.UPSERT)
+                eq(Const.MQ_TOPIC_INDEX),
+                eq(new TopicIndexEvent(9, TopicIndexAction.UPSERT)),
+                any(CorrelationData.class)
         );
     }
 
     @Test
     void exposesRabbitFailuresInsteadOfReportingFalseSuccess() {
-        RabbitTemplate rabbitTemplate = mock(RabbitTemplate.class);
+        RabbitTemplate rabbitTemplate = confirmedRabbitTemplate();
         TopicIndexEvent event = new TopicIndexEvent(10, TopicIndexAction.UPSERT);
         AmqpConnectException failure = new AmqpConnectException(new IllegalStateException("offline"));
-        doThrow(failure).when(rabbitTemplate).convertAndSend(Const.MQ_TOPIC_INDEX, event);
+        doThrow(failure).when(rabbitTemplate).convertAndSend(
+                eq(Const.MQ_TOPIC_INDEX), eq(event), any(CorrelationData.class)
+        );
         TopicIndexEventPublisher publisher = new TopicIndexEventPublisher(rabbitTemplate);
 
         assertThrows(AmqpConnectException.class, () -> publisher.upsert(10));
@@ -72,10 +80,12 @@ class TopicIndexEventPublisherTest {
 
     @Test
     void exposesRabbitFailuresRaisedByTheAfterCommitCallback() {
-        RabbitTemplate rabbitTemplate = mock(RabbitTemplate.class);
+        RabbitTemplate rabbitTemplate = confirmedRabbitTemplate();
         TopicIndexEvent event = new TopicIndexEvent(11, TopicIndexAction.DELETE);
         AmqpConnectException failure = new AmqpConnectException(new IllegalStateException("offline"));
-        doThrow(failure).when(rabbitTemplate).convertAndSend(Const.MQ_TOPIC_INDEX, event);
+        doThrow(failure).when(rabbitTemplate).convertAndSend(
+                eq(Const.MQ_TOPIC_INDEX), eq(event), any(CorrelationData.class)
+        );
         TopicIndexEventPublisher publisher = new TopicIndexEventPublisher(rabbitTemplate);
 
         assertThrows(AmqpConnectException.class, () -> transactionTemplate()
@@ -84,11 +94,13 @@ class TopicIndexEventPublisherTest {
 
     @Test
     void attemptsEveryEventAfterCommitEvenWhenAnEarlierSendFails() {
-        RabbitTemplate rabbitTemplate = mock(RabbitTemplate.class);
+        RabbitTemplate rabbitTemplate = confirmedRabbitTemplate();
         TopicIndexEvent first = new TopicIndexEvent(12, TopicIndexAction.DELETE);
         TopicIndexEvent second = new TopicIndexEvent(13, TopicIndexAction.DELETE);
         AmqpConnectException failure = new AmqpConnectException(new IllegalStateException("offline"));
-        doThrow(failure).when(rabbitTemplate).convertAndSend(Const.MQ_TOPIC_INDEX, first);
+        doThrow(failure).when(rabbitTemplate).convertAndSend(
+                eq(Const.MQ_TOPIC_INDEX), eq(first), any(CorrelationData.class)
+        );
         TopicIndexEventPublisher publisher = new TopicIndexEventPublisher(rabbitTemplate);
 
         assertThrows(AmqpConnectException.class, () -> transactionTemplate().executeWithoutResult(status -> {
@@ -96,8 +108,24 @@ class TopicIndexEventPublisherTest {
             publisher.delete(13);
         }));
 
-        verify(rabbitTemplate).convertAndSend(Const.MQ_TOPIC_INDEX, first);
-        verify(rabbitTemplate).convertAndSend(Const.MQ_TOPIC_INDEX, second);
+        verify(rabbitTemplate).convertAndSend(
+                eq(Const.MQ_TOPIC_INDEX), eq(first), any(CorrelationData.class)
+        );
+        verify(rabbitTemplate).convertAndSend(
+                eq(Const.MQ_TOPIC_INDEX), eq(second), any(CorrelationData.class)
+        );
+    }
+
+    private RabbitTemplate confirmedRabbitTemplate() {
+        RabbitTemplate rabbitTemplate = mock(RabbitTemplate.class);
+        doAnswer(invocation -> {
+            CorrelationData correlation = invocation.getArgument(2);
+            correlation.getFuture().complete(new CorrelationData.Confirm(true, null));
+            return null;
+        }).when(rabbitTemplate).convertAndSend(
+                eq(Const.MQ_TOPIC_INDEX), any(TopicIndexEvent.class), any(CorrelationData.class)
+        );
+        return rabbitTemplate;
     }
 
     private TransactionTemplate transactionTemplate() {
