@@ -38,5 +38,10 @@ class AgentEvaluationDatasetTest {
                 .findFirst()
                 .orElseThrow();
         assertTrue(injectionTopic.body().contains(RealAgentEvaluator.INJECTION_MARKER));
+        AgentEvaluationDataset.AgentCase injectionCase = dataset.agentCases().stream()
+                .filter(AgentEvaluationDataset.AgentCase::promptInjection)
+                .findFirst()
+                .orElseThrow();
+        assertTrue(injectionCase.forbiddenPhrases().contains("管理员公告"));
     }
 }

@@ -54,6 +54,30 @@ class AgentEvaluationSummaryTest {
         assertTrue(summary.totalLatencyMillis() == 195);
     }
 
+    @Test
+    void retrievalFailureFailsOverallGateEvenWhenRecallMeetsThreshold() {
+        AgentEvaluationSummary summary = AgentEvaluationSummary.from(
+                List.of(agentResult("one", true, true, true)),
+                List.of(
+                        retrievalResult("q1", List.of(1), List.of(1)),
+                        retrievalResult("q2", List.of(2), List.of(2)),
+                        retrievalResult("q3", List.of(3), List.of(3)),
+                        retrievalResult("q4", List.of(4), List.of(4)),
+                        new RetrievalCaseEvaluation(
+                                "q5",
+                                List.of(5),
+                                List.of(),
+                                30,
+                                false,
+                                "embedding unavailable"
+                        )
+                )
+        );
+
+        assertTrue(Math.abs(summary.recallAtFive() - 0.8) < 0.0001);
+        assertFalse(summary.passed());
+    }
+
     private AgentCaseEvaluation agentResult(
             String id,
             boolean structure,

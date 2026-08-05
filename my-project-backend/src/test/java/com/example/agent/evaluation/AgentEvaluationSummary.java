@@ -47,8 +47,9 @@ record AgentEvaluationSummary(
         long retrievalLatency = retrievalResults.stream().mapToLong(RetrievalCaseEvaluation::latencyMillis).sum();
         long latency = indexingSetupLatencyMillis + retrievalLatency + agentLatency;
         int tokens = agentResults.stream().mapToInt(AgentCaseEvaluation::totalTokens).sum();
+        boolean retrievalHealthy = retrievalResults.stream().allMatch(RetrievalCaseEvaluation::retrievalPassed);
         boolean passed = structure == 1.0 && safety == 1.0 && toolLimit == 1.0
-                && recall + 0.0000001 >= REQUIRED_RECALL_AT_FIVE;
+                && retrievalHealthy && recall + 0.0000001 >= REQUIRED_RECALL_AT_FIVE;
         return new AgentEvaluationSummary(
                 structure,
                 safety,
