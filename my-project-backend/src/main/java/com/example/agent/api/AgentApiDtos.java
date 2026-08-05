@@ -60,6 +60,7 @@ public final class AgentApiDtos {
     public record Draft(
             int version,
             int editorVersion,
+            String targetEditorId,
             String title,
             Integer topicTypeId,
             String bodyMarkdown,
@@ -87,6 +88,7 @@ public final class AgentApiDtos {
 
     public record RunRequest(
             @Size(max = 8_000) String message,
+            @Size(max = 128) String editorId,
             @NotNull @Min(0) Integer editorVersion,
             @Valid EditorDraft editorDraft
     ) {

@@ -109,7 +109,8 @@ public class AgentController {
                 request.editorVersion(),
                 editor == null ? null : editor.title(),
                 editor == null ? null : editor.topicTypeId(),
-                editor == null ? null : editor.bodyMarkdown()
+                editor == null ? null : editor.bodyMarkdown(),
+                request.editorId()
         ), sink);
         runId.set(startedRunId);
         if (disconnected.get()) {

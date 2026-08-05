@@ -82,4 +82,84 @@ describe('Agent assistant controller', () => {
     expect(api.cancelAgentRun).toHaveBeenCalledWith('run-5')
     expect(controller.state.runStatus).toBe('cancelled')
   })
+
+  test('includes the source editor id in an editor optimization run', async () => {
+    const api = {
+      listRecentAgentSessions: vi.fn().mockResolvedValue([{ id: 5, status: 'ACTIVE' }]),
+      getAgentSession: vi.fn().mockResolvedValue(detail(5)),
+      startAgentRun: vi.fn().mockResolvedValue(undefined)
+    }
+    const controller = createAgentAssistantController(api)
+    await controller.initialize()
+
+    await controller.submit({
+      editorId: 'topic-editor-7',
+      editorVersion: 6,
+      editorDraft: { title: 'Draft', topicTypeId: 2, bodyMarkdown: 'Body' }
+    })
+
+    expect(api.startAgentRun).toHaveBeenCalledWith(
+      5,
+      {
+        message: null,
+        editorId: 'topic-editor-7',
+        editorVersion: 6,
+        editorDraft: { title: 'Draft', topicTypeId: 2, bodyMarkdown: 'Body' }
+      },
+      expect.any(Function),
+      expect.any(AbortSignal)
+    )
+  })
+
+  test('carries question editor context into the follow-up run', async () => {
+    const api = {
+      listRecentAgentSessions: vi.fn().mockResolvedValue([{ id: 5, status: 'ACTIVE' }]),
+      getAgentSession: vi.fn().mockResolvedValue(detail(5)),
+      startAgentRun: vi.fn().mockResolvedValue(undefined)
+    }
+    const controller = createAgentAssistantController(api)
+    await controller.initialize()
+    controller.state.editorContext = {
+      editorId: 'topic-editor-question',
+      editorVersion: 8
+    }
+    controller.prompt.value = 'For first-year students'
+
+    await controller.submit()
+
+    expect(api.startAgentRun).toHaveBeenCalledWith(
+      5,
+      {
+        message: 'For first-year students',
+        editorId: 'topic-editor-question',
+        editorVersion: 8
+      },
+      expect.any(Function),
+      expect.any(AbortSignal)
+    )
+  })
+
+  test('allows only one run submission while the first request is in flight', async () => {
+    let releaseFirst
+    const api = {
+      listRecentAgentSessions: vi.fn().mockResolvedValue([{ id: 5, status: 'ACTIVE' }]),
+      getAgentSession: vi.fn().mockResolvedValue(detail(5)),
+      startAgentRun: vi.fn()
+        .mockImplementationOnce(() => new Promise(resolve => { releaseFirst = resolve }))
+        .mockResolvedValueOnce(undefined)
+    }
+    const controller = createAgentAssistantController(api)
+    await controller.initialize()
+
+    controller.prompt.value = 'First request'
+    const first = controller.submit()
+    controller.prompt.value = 'Second request'
+    const second = controller.submit()
+
+    await vi.waitFor(() => expect(api.startAgentRun).toHaveBeenCalled())
+    releaseFirst()
+    await Promise.all([first, second])
+
+    expect(api.startAgentRun).toHaveBeenCalledTimes(1)
+  })
 })

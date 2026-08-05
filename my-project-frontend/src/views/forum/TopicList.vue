@@ -22,6 +22,7 @@ import router from "@/router";
 import TopicTag from "@/components/TopicTag.vue";
 import TopicCollectList from "@/components/TopicCollectList.vue";
 import {apiForumTopicList, apiForumTopTopics, apiForumWeather} from "@/net/api/forum";
+import {pendingDraftApplication} from "@/agent/editorBridge";
 
 const store = useStore()
 
@@ -42,6 +43,10 @@ const topics = reactive({
 const collects = ref(false)
 
 watch(() => topics.type, () => resetList(), {immediate: true})
+watch(pendingDraftApplication, pending => {
+    if(pending && pending.targetEditorId == null)
+        editor.value = true
+})
 
 const today = computed(() => {
     const date = new Date()
@@ -234,7 +239,8 @@ onMounted(() => {
                 </div>
             </div>
         </div>
-        <topic-editor :show="editor" @success="onTopicCreate" @close="editor = false"/>
+        <topic-editor :show="editor" editor-key="new-topic" accept-untargeted-draft
+                      @success="onTopicCreate" @close="editor = false"/>
         <topic-collect-list :show="collects" @close="collects = false"/>
     </div>
 </template>

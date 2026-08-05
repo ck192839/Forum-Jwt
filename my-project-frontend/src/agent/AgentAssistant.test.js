@@ -1,4 +1,4 @@
-import { reactive, ref } from 'vue'
+import { nextTick, reactive, ref } from 'vue'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 
@@ -8,6 +8,11 @@ vi.mock('./useAgentAssistant', () => ({
 }))
 
 import AgentAssistant from './AgentAssistant.vue'
+import {
+  pendingDraftApplication,
+  requestEditorOptimization,
+  resetEditorBridge
+} from './editorBridge'
 
 const mountOptions = {
   global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } }
@@ -17,6 +22,7 @@ describe('AgentAssistant', () => {
   let controller
 
   beforeEach(() => {
+    resetEditorBridge()
     controller = {
       state: reactive({
         sessionId: 7,
@@ -71,5 +77,30 @@ describe('AgentAssistant', () => {
     await wrapper.get('.run-cancel').trigger('click')
 
     expect(controller.cancel).toHaveBeenCalledOnce()
+  })
+
+  test('runs editor optimization and routes the draft back to its source editor', async () => {
+    const wrapper = mount(AgentAssistant, mountOptions)
+    const editorDraft = { title: 'Title', topicTypeId: 1, bodyMarkdown: 'Body' }
+
+    requestEditorOptimization({ editorId: 'editor-a', editorVersion: 4, editorDraft })
+    await nextTick()
+    await nextTick()
+
+    expect(controller.initialize).toHaveBeenCalledOnce()
+    await vi.waitFor(() => {
+      expect(controller.submit).toHaveBeenCalledWith({
+        editorId: 'editor-a',
+        editorVersion: 4,
+        editorDraft
+      })
+    })
+
+    controller.state.draft.targetEditorId = 'editor-a'
+    await wrapper.get('.draft-apply').trigger('click')
+    expect(pendingDraftApplication.value).toMatchObject({
+      targetEditorId: 'editor-a',
+      draft: controller.state.draft
+    })
   })
 })

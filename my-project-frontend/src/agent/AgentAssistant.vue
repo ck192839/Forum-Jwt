@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import {
   Check,
   Close,
@@ -11,6 +11,10 @@ import {
   VideoPause
 } from '@element-plus/icons-vue'
 import { createAgentAssistantController } from './useAgentAssistant'
+import {
+  editorOptimizationRequest,
+  publishDraftApplication
+} from './editorBridge'
 
 const emit = defineEmits(['apply-draft'])
 const open = ref(false)
@@ -42,6 +46,11 @@ async function openAssistant() {
   await initialize()
 }
 
+function applyDraft(draft) {
+  publishDraftApplication(draft)
+  emit('apply-draft', draft)
+}
+
 function sessionLabel(session) {
   const date = session.updatedAt ? new Date(session.updatedAt).toLocaleString('zh-CN') : `#${session.id}`
   return session.status === 'ACTIVE' ? `${date} · 进行中` : date
@@ -53,6 +62,17 @@ function submitOnShortcut(event) {
     submit()
   }
 }
+
+watch(editorOptimizationRequest, async request => {
+  if (!request) return
+  open.value = true
+  await initialize()
+  await submit({
+    editorId: request.editorId,
+    editorVersion: request.editorVersion,
+    editorDraft: request.editorDraft
+  })
+})
 </script>
 
 <template>
@@ -143,7 +163,7 @@ function submitOnShortcut(event) {
                   <span>草稿 v{{ state.draft.version }}</span>
                   <h3>{{ state.draft.title }}</h3>
                 </div>
-                <button type="button" class="draft-apply" @click="emit('apply-draft', state.draft)">
+                <button type="button" class="draft-apply" @click="applyDraft(state.draft)">
                   应用到编辑器
                 </button>
               </div>

@@ -15,6 +15,7 @@ public class AgentDraft {
     private Long sessionId;
     private Integer version;
     private Integer editorVersion;
+    private String targetEditorId;
     private String title;
     private Integer topicTypeId;
     private String bodyMarkdown;

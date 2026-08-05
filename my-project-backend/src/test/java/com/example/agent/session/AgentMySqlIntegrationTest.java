@@ -82,6 +82,13 @@ class AgentMySqlIntegrationTest {
                       AND table_name = 'agent_message'
                       AND column_name = 'content'
                     """));
+            assertEquals("VARCHAR", scalar(connection, """
+                    SELECT UPPER(DATA_TYPE)
+                    FROM information_schema.columns
+                    WHERE table_schema = DATABASE()
+                      AND table_name = 'agent_draft'
+                      AND column_name = 'target_editor_id'
+                    """));
             assertEquals(4L, number(connection, """
                     SELECT COUNT(*) FROM information_schema.tables
                     WHERE table_schema = DATABASE() AND table_name LIKE 'agent_%'
@@ -100,11 +107,13 @@ class AgentMySqlIntegrationTest {
             mapper.upsert(draft);
             draft.setTitle("Second");
             draft.setEditorVersion(2);
+            draft.setTargetEditorId("topic-editor-2");
             mapper.upsert(draft);
 
             AgentDraft persisted = mapper.selectBySessionId(sessionId);
             assertEquals(2, persisted.getVersion());
             assertEquals(2, persisted.getEditorVersion());
+            assertEquals("topic-editor-2", persisted.getTargetEditorId());
             assertEquals("Second", persisted.getTitle());
         }
     }

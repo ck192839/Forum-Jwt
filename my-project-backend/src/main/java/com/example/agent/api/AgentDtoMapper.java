@@ -76,6 +76,7 @@ final class AgentDtoMapper {
         return new AgentApiDtos.Draft(
                 draft.getVersion(),
                 draft.getEditorVersion(),
+                draft.getTargetEditorId(),
                 draft.getTitle(),
                 draft.getTopicTypeId(),
                 draft.getBodyMarkdown(),

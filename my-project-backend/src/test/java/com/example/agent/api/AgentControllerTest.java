@@ -100,6 +100,7 @@ class AgentControllerTest {
         draft.setSessionId(99L);
         draft.setVersion(4);
         draft.setEditorVersion(9);
+        draft.setTargetEditorId("topic-editor-restored");
         draft.setTitle("Guide");
         draft.setTopicTypeId(3);
         draft.setBodyMarkdown("Body");
@@ -115,6 +116,7 @@ class AgentControllerTest {
                 .andExpect(jsonPath("$.data.events[0].payload.toolName").value("search_similar_topics"))
                 .andExpect(jsonPath("$.data.draft.version").value(4))
                 .andExpect(jsonPath("$.data.draft.editorVersion").value(9))
+                .andExpect(jsonPath("$.data.draft.targetEditorId").value("topic-editor-restored"))
                 .andExpect(jsonPath("$.data.draft.citations[0].topicId").value(42));
 
         verify(sessions).load(7, 99L);
@@ -258,7 +260,7 @@ class AgentControllerTest {
                         .requestAttr("userId", 7)
                         .contentType(MediaType.APPLICATION_JSON)
                         .accept(MediaType.TEXT_EVENT_STREAM)
-                        .content("{\"message\":\"Improve it\",\"editorVersion\":8,"
+                        .content("{\"message\":\"Improve it\",\"editorId\":\"topic-editor-8\",\"editorVersion\":8,"
                                 + "\"editorDraft\":{\"title\":\"Old\",\"topicTypeId\":2,"
                                 + "\"bodyMarkdown\":\"Body\"}}"))
                 .andExpect(status().isOk())
@@ -268,6 +270,7 @@ class AgentControllerTest {
         ArgumentCaptor<AgentRunCommand> command = ArgumentCaptor.forClass(AgentRunCommand.class);
         verify(runs).start(eq(7), eq(99L), command.capture(), any(AgentEventSink.class));
         assertEquals("Improve it", command.getValue().message());
+        assertEquals("topic-editor-8", command.getValue().editorId());
         assertEquals(8, command.getValue().editorVersion());
         assertEquals("Old", command.getValue().editorTitle());
     }

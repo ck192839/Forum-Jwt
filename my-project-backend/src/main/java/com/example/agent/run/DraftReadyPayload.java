@@ -10,7 +10,8 @@ public record DraftReadyPayload(
         String bodyMarkdown,
         List<AgentCitation> citations,
         int draftVersion,
-        int basedOnEditorVersion
+        int basedOnEditorVersion,
+        String targetEditorId
 ) {
     public DraftReadyPayload {
         citations = List.copyOf(citations);

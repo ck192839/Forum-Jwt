@@ -50,34 +50,43 @@ export function createAgentAssistantController(api = defaultApi) {
   }
 
   async function submit(editorContext = {}) {
+    if (submitting.value) return false
     const message = prompt.value.trim()
-    if (!message && !editorContext.editorDraft) return
-    if (state.sessionId == null) await newSession()
-
-    if (message) {
-      state.messages.push({ role: 'USER', content: message, createdAt: new Date().toISOString() })
-    }
-    prompt.value = ''
+    const hasExplicitEditorContext = editorContext.editorDraft
+      || editorContext.editorId
+      || editorContext.editorVersion != null
+    const effectiveEditorContext = hasExplicitEditorContext
+      ? editorContext
+      : (state.editorContext || editorContext)
+    if (!message && !effectiveEditorContext.editorDraft) return false
     submitting.value = true
-    state.runStatus = 'starting'
-    state.error = null
-    abortController = new AbortController()
-
-    const request = {
-      message: message || null,
-      editorVersion: editorContext.editorVersion ?? 0
-    }
-    if (editorContext.editorDraft) request.editorDraft = editorContext.editorDraft
 
     try {
+      if (state.sessionId == null) await newSession()
+      if (message) {
+        state.messages.push({ role: 'USER', content: message, createdAt: new Date().toISOString() })
+      }
+      prompt.value = ''
+      state.runStatus = 'starting'
+      state.error = null
+      abortController = new AbortController()
+
+      const request = {
+        message: message || null,
+        editorVersion: effectiveEditorContext.editorVersion ?? 0
+      }
+      if (effectiveEditorContext.editorId) request.editorId = effectiveEditorContext.editorId
+      if (effectiveEditorContext.editorDraft) request.editorDraft = effectiveEditorContext.editorDraft
+
       await api.startAgentRun(
         state.sessionId,
         request,
         event => applyAgentEvent(state, event),
         abortController.signal
       )
+      return true
     } catch (error) {
-      if (abortController.signal.aborted || error?.name === 'AbortError') {
+      if (abortController?.signal.aborted || error?.name === 'AbortError') {
         state.runStatus = 'cancelled'
       } else {
         state.runStatus = 'error'

@@ -228,6 +228,7 @@ function deleteComment(id) {
             </div>
         </transition>
         <topic-editor :show="edit" @close="edit = false" v-if="topic.data && store.forum.types"
+                      :editor-key="`topic-${tid}`"
                       :default-type="topic.data.type" :default-text="topic.data.content"
                       :default-title="topic.data.title" submit-button="更新帖子内容" :submit="updateTopic"/>
         <topic-comment-editor :show="comment.show" @close="comment.show = false" :tid="tid"

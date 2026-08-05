@@ -116,9 +116,9 @@ public class AgentRunService {
                     observer
             );
             if (result instanceof AgentQuestionResult question) {
-                handleQuestion(run, question);
+                handleQuestion(run, command, question);
             } else if (result instanceof AgentDraftResult draft) {
-                handleDraft(run, draft);
+                handleDraft(run, command, draft);
             } else {
                 throw new AgentRunException(AgentRunFailure.INVALID_RESPONSE, "Unknown Agent result");
             }
@@ -137,7 +137,7 @@ public class AgentRunService {
         }
     }
 
-    private void handleQuestion(ActiveRun run, AgentQuestionResult question) {
+    private void handleQuestion(ActiveRun run, AgentRunCommand command, AgentQuestionResult question) {
         sessionService.appendMessage(
                 run.uid(),
                 run.sessionId(),
@@ -145,10 +145,14 @@ public class AgentRunService {
                 question.question()
         );
         emit(run, AgentSseEventType.MESSAGE_DELTA, new MessageDeltaPayload(question.question()));
-        emit(run, AgentSseEventType.QUESTION, new QuestionPayload(question.question()));
+        emit(run, AgentSseEventType.QUESTION, new QuestionPayload(
+                question.question(),
+                command.editorId(),
+                command.editorVersion()
+        ));
     }
 
-    private void handleDraft(ActiveRun run, AgentDraftResult draft) {
+    private void handleDraft(ActiveRun run, AgentRunCommand command, AgentDraftResult draft) {
         String citationsJson = json(draft.citations());
         AgentDraft persisted = sessionService.saveDraft(
                 run.uid(),
@@ -158,7 +162,8 @@ public class AgentRunService {
                         draft.title(),
                         draft.topicTypeId(),
                         draft.bodyMarkdown(),
-                        citationsJson
+                        citationsJson,
+                        command.editorId()
                 )
         );
         sessionService.appendMessage(
@@ -178,7 +183,8 @@ public class AgentRunService {
                 draft.bodyMarkdown(),
                 draft.citations(),
                 persisted.getVersion(),
-                persisted.getEditorVersion()
+                persisted.getEditorVersion(),
+                persisted.getTargetEditorId()
         ));
     }
 

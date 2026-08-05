@@ -50,7 +50,7 @@ class AgentRunServiceTest {
         String runId = service.start(
                 7,
                 99L,
-                new AgentRunCommand("Help me write", 4, null, null, null),
+                new AgentRunCommand("Help me write", 4, null, null, null, "topic-editor-question"),
                 sink
         );
 
@@ -65,6 +65,9 @@ class AgentRunServiceTest {
         ), sink.types());
         assertEquals(List.of("run-1:1", "run-1:2", "run-1:3", "run-1:4", "run-1:5", "run-1:6"), sink.ids());
         assertTrue(sink.completed);
+        QuestionPayload question = (QuestionPayload) sink.payloads.get(4);
+        assertEquals("topic-editor-question", question.targetEditorId());
+        assertEquals(4, question.basedOnEditorVersion());
         verify(sessions).appendMessage(7, 99L, AgentMessageRole.USER, "Help me write");
         verify(sessions).appendMessage(7, 99L, AgentMessageRole.ASSISTANT, "Which audience should this target?");
     }
@@ -82,6 +85,7 @@ class AgentRunServiceTest {
         AgentDraft persisted = new AgentDraft();
         persisted.setVersion(5);
         persisted.setEditorVersion(8);
+        persisted.setTargetEditorId("topic-editor-8");
         when(sessions.saveDraft(anyInt(), any(Long.class), any(AgentDraftInput.class))).thenReturn(persisted);
         RecordingSink sink = new RecordingSink();
         AgentRunService service = service(sessions, runner, Runnable::run);
@@ -89,13 +93,14 @@ class AgentRunServiceTest {
         service.start(
                 7,
                 99L,
-                new AgentRunCommand("Improve this", 8, "Old title", 2, "Old body"),
+                new AgentRunCommand("Improve this", 8, "Old title", 2, "Old body", "topic-editor-8"),
                 sink
         );
 
         ArgumentCaptor<AgentDraftInput> input = ArgumentCaptor.forClass(AgentDraftInput.class);
         verify(sessions).saveDraft(org.mockito.ArgumentMatchers.eq(7), org.mockito.ArgumentMatchers.eq(99L), input.capture());
         assertEquals(8, input.getValue().editorVersion());
+        assertEquals("topic-editor-8", input.getValue().targetEditorId());
         assertEquals("Network guide", input.getValue().title());
         assertTrue(input.getValue().citationsJson().contains("42"));
         assertEquals(List.of(
@@ -105,6 +110,7 @@ class AgentRunServiceTest {
                 AgentSseEventType.RUN_COMPLETED
         ), sink.types());
         assertEquals(5, ((DraftReadyPayload) sink.payloads.get(2)).draftVersion());
+        assertEquals("topic-editor-8", ((DraftReadyPayload) sink.payloads.get(2)).targetEditorId());
     }
 
     @Test

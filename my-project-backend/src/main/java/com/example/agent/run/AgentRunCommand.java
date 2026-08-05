@@ -5,8 +5,19 @@ public record AgentRunCommand(
         int editorVersion,
         String editorTitle,
         Integer editorTopicTypeId,
-        String editorBodyMarkdown
+        String editorBodyMarkdown,
+        String editorId
 ) {
+    public AgentRunCommand(
+            String message,
+            int editorVersion,
+            String editorTitle,
+            Integer editorTopicTypeId,
+            String editorBodyMarkdown
+    ) {
+        this(message, editorVersion, editorTitle, editorTopicTypeId, editorBodyMarkdown, null);
+    }
+
     public AgentRunCommand {
         if (editorVersion < 0) {
             throw new IllegalArgumentException("editorVersion must be non-negative");
@@ -17,6 +28,9 @@ public record AgentRunCommand(
                 || editorBodyMarkdown != null;
         if (!hasMessage && !hasEditorDraft) {
             throw new IllegalArgumentException("A message or editor draft is required");
+        }
+        if (editorId != null && editorId.length() > 128) {
+            throw new IllegalArgumentException("editorId is too long");
         }
     }
 

@@ -125,6 +125,7 @@ public class AgentSessionService {
         draft.setSessionId(sessionId);
         draft.setVersion(1);
         draft.setEditorVersion(input.editorVersion());
+        draft.setTargetEditorId(input.targetEditorId());
         draft.setTitle(input.title());
         draft.setTopicTypeId(input.topicTypeId());
         draft.setBodyMarkdown(input.bodyMarkdown());

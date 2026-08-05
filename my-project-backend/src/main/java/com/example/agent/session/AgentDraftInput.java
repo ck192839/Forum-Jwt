@@ -5,6 +5,16 @@ public record AgentDraftInput(
         String title,
         int topicTypeId,
         String bodyMarkdown,
-        String citationsJson
+        String citationsJson,
+        String targetEditorId
 ) {
+    public AgentDraftInput(
+            int editorVersion,
+            String title,
+            int topicTypeId,
+            String bodyMarkdown,
+            String citationsJson
+    ) {
+        this(editorVersion, title, topicTypeId, bodyMarkdown, citationsJson, null);
+    }
 }

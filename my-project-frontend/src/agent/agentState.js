@@ -21,6 +21,7 @@ export function createAgentState() {
     timeline: [],
     citations: [],
     question: null,
+    editorContext: null,
     draft: null,
     error: null
   }
@@ -36,8 +37,13 @@ export function restoreAgentSession(state, detail) {
   })
 
   for (const event of detail.events) {
-    if (event.type === 'tool_started' || event.type === 'tool_completed' || event.type === 'citation') {
+    if (event.type === 'tool_started'
+      || event.type === 'tool_completed'
+      || event.type === 'citation'
+      || event.type === 'question') {
       applyAgentEvent(state, event)
+    } else if (event.type === 'draft_ready') {
+      state.editorContext = null
     }
   }
 }
@@ -57,6 +63,7 @@ export function applyAgentEvent(state, event) {
       state.timeline = []
       state.citations = []
       state.question = null
+      state.draft = null
       state.error = null
       break
     case 'message_delta':
@@ -91,6 +98,12 @@ export function applyAgentEvent(state, event) {
       break
     case 'question':
       state.question = payload.question
+      state.editorContext = payload.targetEditorId
+        ? {
+            editorId: payload.targetEditorId,
+            editorVersion: payload.basedOnEditorVersion
+          }
+        : null
       break
     case 'draft_ready':
       state.draft = {
@@ -99,8 +112,10 @@ export function applyAgentEvent(state, event) {
         bodyMarkdown: payload.bodyMarkdown,
         citations: payload.citations || [],
         version: payload.draftVersion,
-        editorVersion: payload.basedOnEditorVersion
+        editorVersion: payload.basedOnEditorVersion,
+        targetEditorId: payload.targetEditorId ?? null
       }
+      state.editorContext = null
       break
     case 'run_completed':
       state.runStatus = String(payload.status || 'completed').toLowerCase()
