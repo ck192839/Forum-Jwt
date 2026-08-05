@@ -9,12 +9,13 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import lombok.extern.slf4j.Slf4j;
 
+@Slf4j
 @RestControllerAdvice(assignableTypes = AgentController.class)
 public class AgentControllerAdvice {
 
-    @ExceptionHandler({MethodArgumentNotValidException.class, HttpMessageNotReadableException.class,
-            IllegalArgumentException.class})
+    @ExceptionHandler({MethodArgumentNotValidException.class, HttpMessageNotReadableException.class})
     public ResponseEntity<RestBean<Void>> badRequest(Exception exception) {
         return response(HttpStatus.BAD_REQUEST, "Invalid Agent request");
     }
@@ -31,6 +32,7 @@ public class AgentControllerAdvice {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<RestBean<Void>> serverError(Exception exception) {
+        log.error("Agent API operation failed", exception);
         return response(HttpStatus.INTERNAL_SERVER_ERROR, "Unable to start or restore Agent operation");
     }
 

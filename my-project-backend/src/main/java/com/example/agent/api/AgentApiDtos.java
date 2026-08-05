@@ -8,6 +8,8 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.Size;
 
 import java.time.Instant;
 import java.util.List;
@@ -71,9 +73,9 @@ public final class AgentApiDtos {
     }
 
     public record EditorDraft(
-            String title,
-            Integer topicTypeId,
-            String bodyMarkdown
+            @Size(max = 30) String title,
+            @Positive Integer topicTypeId,
+            @Size(max = 20_000) String bodyMarkdown
     ) {
         @JsonIgnore
         boolean hasContent() {
@@ -84,7 +86,7 @@ public final class AgentApiDtos {
     }
 
     public record RunRequest(
-            String message,
+            @Size(max = 8_000) String message,
             @NotNull @Min(0) Integer editorVersion,
             @Valid EditorDraft editorDraft
     ) {

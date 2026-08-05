@@ -4,12 +4,12 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
 import java.util.Objects;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class SseEmitterAgentEventSink implements AgentEventSink {
     private final SseEmitter emitter;
     private final Runnable disconnectHandler;
-    private final AtomicBoolean terminated = new AtomicBoolean();
+    private final Object lifecycleMonitor = new Object();
+    private Lifecycle lifecycle = Lifecycle.OPEN;
 
     public SseEmitterAgentEventSink(SseEmitter emitter, Runnable disconnectHandler) {
         this.emitter = Objects.requireNonNull(emitter, "emitter");
@@ -21,39 +21,72 @@ public final class SseEmitterAgentEventSink implements AgentEventSink {
 
     @Override
     public void emit(AgentSseEventType type, String eventId, Object payload) {
-        if (terminated.get()) {
-            return;
-        }
-        try {
-            emitter.send(SseEmitter.event()
-                    .id(eventId)
-                    .name(type.wireName())
-                    .data(payload));
-        } catch (IOException exception) {
-            if (terminated.compareAndSet(false, true)) {
-                disconnectHandler.run();
-                emitter.completeWithError(exception);
+        synchronized (lifecycleMonitor) {
+            if (lifecycle == Lifecycle.TERMINATED) {
+                return;
+            }
+            try {
+                emitter.send(SseEmitter.event()
+                        .id(eventId)
+                        .name(type.wireName())
+                        .data(payload));
+            } catch (IOException | RuntimeException exception) {
+                terminateDisconnected(exception);
             }
         }
     }
 
     @Override
     public void complete() {
-        if (terminated.compareAndSet(false, true)) {
-            emitter.complete();
+        synchronized (lifecycleMonitor) {
+            if (terminate()) {
+                bestEffort(emitter::complete);
+            }
         }
     }
 
     @Override
     public void completeWithError(Throwable error) {
-        if (terminated.compareAndSet(false, true)) {
-            emitter.completeWithError(error);
+        synchronized (lifecycleMonitor) {
+            if (terminate()) {
+                bestEffort(() -> emitter.completeWithError(error));
+            }
         }
     }
 
     private void disconnect() {
-        if (terminated.compareAndSet(false, true)) {
-            disconnectHandler.run();
+        synchronized (lifecycleMonitor) {
+            if (terminate()) {
+                bestEffort(disconnectHandler);
+            }
         }
+    }
+
+    private void terminateDisconnected(Throwable error) {
+        if (terminate()) {
+            bestEffort(disconnectHandler);
+            bestEffort(() -> emitter.completeWithError(error));
+        }
+    }
+
+    private boolean terminate() {
+        if (lifecycle == Lifecycle.TERMINATED) {
+            return false;
+        }
+        lifecycle = Lifecycle.TERMINATED;
+        return true;
+    }
+
+    private void bestEffort(Runnable operation) {
+        try {
+            operation.run();
+        } catch (RuntimeException ignored) {
+            // The response may already be committed or disconnected.
+        }
+    }
+
+    private enum Lifecycle {
+        OPEN,
+        TERMINATED
     }
 }

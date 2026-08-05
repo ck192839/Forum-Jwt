@@ -1,5 +1,9 @@
 package com.example.agent.api;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.example.agent.run.AgentEventSink;
 import com.example.agent.run.AgentSseEventType;
 import com.example.agent.run.AgentRunCommand;
@@ -22,6 +26,7 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
+import org.slf4j.LoggerFactory;
 
 import java.sql.Timestamp;
 import java.time.Instant;
@@ -169,6 +174,76 @@ class AgentControllerTest {
                 .andExpect(status().isBadRequest());
 
         verify(runs, never()).start(any(Integer.class), any(Long.class), any(), any());
+    }
+
+    @Test
+    void rejectsOversizedAgentInputsAndNonPositiveTopicType() throws Exception {
+        List<String> invalidBodies = List.of(
+                "{\"message\":\"" + "m".repeat(8_001) + "\",\"editorVersion\":1}",
+                "{\"editorVersion\":1,\"editorDraft\":{\"title\":\"" + "t".repeat(31)
+                        + "\",\"topicTypeId\":1}}",
+                "{\"editorVersion\":1,\"editorDraft\":{\"bodyMarkdown\":\"" + "b".repeat(20_001)
+                        + "\",\"topicTypeId\":1}}",
+                "{\"editorVersion\":1,\"editorDraft\":{\"topicTypeId\":-1}}"
+        );
+
+        for (String body : invalidBodies) {
+            mvc.perform(post("/api/agent/sessions/99/runs")
+                            .requestAttr("userId", 7)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(body))
+                    .andExpect(status().isBadRequest());
+        }
+
+        verify(runs, never()).start(any(Integer.class), any(Long.class), any(), any());
+    }
+
+    @Test
+    void acceptsAgentInputAtEveryDocumentedBoundary() throws Exception {
+        when(runs.start(eq(7), eq(99L), any(), any())).thenReturn("run-boundary");
+        String body = "{\"message\":\"" + "m".repeat(8_000)
+                + "\",\"editorVersion\":0,\"editorDraft\":{\"title\":\"" + "t".repeat(30)
+                + "\",\"topicTypeId\":1,\"bodyMarkdown\":\"" + "b".repeat(20_000) + "\"}}";
+
+        mvc.perform(post("/api/agent/sessions/99/runs")
+                        .requestAttr("userId", 7)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk())
+                .andExpect(request().asyncStarted());
+
+        verify(runs).start(eq(7), eq(99L), any(), any());
+    }
+
+    @Test
+    void treatsUnknownPersistedEventTypeAsLoggedInternalError() throws Exception {
+        AgentEvent event = new AgentEvent();
+        event.setId(12L);
+        event.setSessionId(99L);
+        event.setRunId("run-1");
+        event.setSequenceNo(1);
+        event.setType("future_event");
+        event.setPayloadJson("{\"future\":true}");
+        when(sessions.load(7, 99L)).thenReturn(new AgentSessionAggregate(
+                session(99L, 7), List.of(), List.of(event), null
+        ));
+        Logger logger = (Logger) LoggerFactory.getLogger(AgentControllerAdvice.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            mvc.perform(get("/api/agent/sessions/99").requestAttr("userId", 7))
+                    .andExpect(status().isInternalServerError())
+                    .andExpect(jsonPath("$.code").value(500))
+                    .andExpect(jsonPath("$.message").value("Unable to start or restore Agent operation"));
+        } finally {
+            logger.detachAppender(appender);
+            appender.stop();
+        }
+
+        assertEquals(1, appender.list.size());
+        assertEquals(Level.ERROR, appender.list.get(0).getLevel());
+        assertEquals("Agent API operation failed", appender.list.get(0).getFormattedMessage());
     }
 
     @Test

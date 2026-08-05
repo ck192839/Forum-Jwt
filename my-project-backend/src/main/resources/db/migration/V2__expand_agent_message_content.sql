@@ -1,0 +1,2 @@
+ALTER TABLE agent_message
+    MODIFY COLUMN content MEDIUMTEXT NOT NULL;
