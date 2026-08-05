@@ -97,14 +97,15 @@ function post(url, data, success, failure = defaultFailure) {
     internalPost(url, data, accessHeader() , success, failure)
 }
 
-function fetchPost(url, data) {
+function fetchPost(url, data, signal) {
     return fetch(axios.defaults.baseURL + url, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${takeAccessToken()?.token}`
         },
-        body: JSON.stringify(data)
+        body: JSON.stringify(data),
+        signal
     })
 }
 

@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "test": "vitest run",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -23,9 +24,12 @@
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^4.2.3",
+    "@vue/test-utils": "^2.4.6",
+    "jsdom": "^22.1.0",
     "less": "^4.2.0",
     "unplugin-auto-import": "^0.15.2",
     "unplugin-vue-components": "^0.24.1",
-    "vite": "^4.4.6"
+    "vite": "^4.4.6",
+    "vitest": "^0.34.6"
   }
 }
