@@ -10,6 +10,7 @@ public class AgentRuntimeProperties {
     private Duration timeout = Duration.ofSeconds(60);
     private int runThreads = 4;
     private int callThreads = 8;
+    private Duration sseTimeout = Duration.ofSeconds(65);
 
     public int getMaxToolCalls() {
         return maxToolCalls;
@@ -40,6 +41,17 @@ public class AgentRuntimeProperties {
 
     public int getCallThreads() {
         return callThreads;
+    }
+
+    public Duration getSseTimeout() {
+        return sseTimeout;
+    }
+
+    public void setSseTimeout(Duration sseTimeout) {
+        if (sseTimeout == null || sseTimeout.isZero() || sseTimeout.isNegative()) {
+            throw new IllegalArgumentException("sseTimeout must be positive");
+        }
+        this.sseTimeout = sseTimeout;
     }
 
     public void setCallThreads(int callThreads) {

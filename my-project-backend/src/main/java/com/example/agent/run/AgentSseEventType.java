@@ -20,4 +20,13 @@ public enum AgentSseEventType {
     public String wireName() {
         return wireName;
     }
+
+    public static AgentSseEventType fromWireName(String wireName) {
+        for (AgentSseEventType type : values()) {
+            if (type.wireName.equals(wireName)) {
+                return type;
+            }
+        }
+        throw new IllegalArgumentException("Unknown Agent event type: " + wireName);
+    }
 }
