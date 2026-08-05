@@ -50,6 +50,7 @@ public class TopicIndexRebuildService {
         try {
             List<Topic> topics = topicMapper.selectList(Wrappers.<Topic>query().eq("invisible", 0));
             status = new TopicIndexRebuildStatus(true, topics.size(), 0, 0, startedAt, null);
+            indexer.clear();
             for (Topic topic : topics) {
                 try {
                     indexer.index(topic);

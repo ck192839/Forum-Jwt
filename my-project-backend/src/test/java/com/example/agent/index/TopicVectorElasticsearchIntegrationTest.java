@@ -113,6 +113,9 @@ class TopicVectorElasticsearchIntegrationTest {
         TopicMapper mapper = mock(TopicMapper.class);
         AtomicReference<Wrapper<Topic>> query = new AtomicReference<>();
         Topic visible = topic(51, 0, "Visible rebuild content");
+        indexer.index(topic(50, 0, "Stale content for a deleted topic"));
+        refresh();
+        assertFalse(documentsFor(50).isEmpty());
         when(mapper.selectList(any())).thenAnswer(invocation -> {
             query.set(invocation.getArgument(0));
             return List.of(visible);
@@ -124,6 +127,7 @@ class TopicVectorElasticsearchIntegrationTest {
 
         assertEquals(1, rebuild.status().processed());
         assertFalse(documentsFor(51).isEmpty());
+        assertTrue(documentsFor(50).isEmpty());
         assertTrue(query.get().getSqlSegment().contains("invisible"));
         AbstractWrapper<?, ?, ?> wrapper = (AbstractWrapper<?, ?, ?>) query.get();
         assertTrue(wrapper.getParamNameValuePairs().containsValue(0));

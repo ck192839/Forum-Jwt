@@ -50,6 +50,10 @@ public class TopicVectorIndexer {
         vectorStore.delete(filterFor(topicId));
     }
 
+    public void clear() {
+        vectorStore.delete(new FilterExpressionBuilder().eq("visible", true).build());
+    }
+
     private Filter.Expression filterFor(int topicId) {
         return new FilterExpressionBuilder().eq("topicId", topicId).build();
     }
