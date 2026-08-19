@@ -1,9 +1,12 @@
-import DOMPurify from 'dompurify'
+import createDOMPurify from 'dompurify'
 import MarkdownIt from 'markdown-it'
 import { diffLines } from 'diff'
 import { deltaToModelText } from './deltaText'
 
 export { deltaToModelText } from './deltaText'
+
+// dompurify 3.x 默认导出是工厂函数，需显式绑定 window（jsdom 测试环境同样适用）
+const DOMPurify = createDOMPurify(window)
 
 const markdown = new MarkdownIt({
   html: false,
