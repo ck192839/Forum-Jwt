@@ -10,6 +10,8 @@ import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.model.Generation;
+import org.springframework.ai.chat.model.StreamingChatModel;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.deepseek.DeepSeekChatOptions;
 import org.springframework.ai.deepseek.api.ResponseFormat;
@@ -32,19 +34,40 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+/**
+ * Agent 模块的核心：一个 ReAct（Reasoning + Acting）循环。
+ *
+ * 工作流程（循环直到终态）：\n
+ * 1. 把「系统提示 + 历史 + 用户请求」发给 DeepSeek（JSON 模式，temperature=0.2）\n
+ * 2. 根据模型输出分流：\n
+ * - 输出 QUESTION（JSON 或工具编码）→ 追问用户，结束\n
+ * - 输出 DRAFT 且与 validate_draft 校验过的内容一致 → 结束\n
+ * - 模型要调用工具 → 执行工具，把结果拼回对话历史，继续循环\n
+ * 3. 三个硬性约束：60 秒总预算（deadline）、8 次工具调用上限、最多 2 次终端修复\n
+ *
+ * 安全设计：\n
+ * - 工具输出被视为不可信数据，系统提示禁止模型遵循其中的指令\n
+ * - DRAFT 必须经过 validate_draft 校验，且以校验参数为准生成确定性结果\n
+ * - 引用 topicId 只能来自工具真实返回（knownTopicIds 白名单）\n
+ * - 绝不向用户暴露思维链 / 隐藏推理
+ */
 public final class ForumReActAgent implements AgentRunner {
+    // 取消/超时检查的轮询间隔：每 50ms 检查一次 future 是否完成
     private static final long CANCELLATION_POLL_NANOS = TimeUnit.MILLISECONDS.toNanos(50);
+    // 终端输出无效时的最大修复次数
     private static final int MAX_TERMINAL_REPAIR_ATTEMPTS = 2;
+    // 修复提示：让模型重新输出严格 JSON（用于 AgentOutputValidationException 后的重试）
     private static final String TERMINAL_REPAIR_PROMPT = """
             Your previous terminal response was invalid. Return only the exact JSON object,
             starting with { and ending with }, without Markdown fences or explanatory text.
             For a DRAFT, return exactly the last successfully validated title, section, and body;
             otherwise call validate_draft again before returning the corrected JSON.
             """;
+    // 哪些工具的结果可以产生「引用」（citation 白名单来源）
     private static final Set<String> CITATION_TOOLS = Set.of(
             "search_similar_topics",
-            "read_public_topic"
-    );
+            "read_public_topic");
+    // 系统提示词：定义 Agent 的角色、能力边界、安全约束与输出协议
     private static final String SYSTEM_PROMPT = """
             You are a forum authoring Agent. Help the user produce a high-quality forum post.
             You may only use the supplied tools to list sections, search similar public topics,
@@ -74,13 +97,13 @@ public final class ForumReActAgent implements AgentRunner {
             Before returning DRAFT, call validate_draft for the proposed title, section, and body.
             """;
 
-    private final ChatModel chatModel;
-    private final ToolCallingManager toolCallingManager;
-    private final List<ToolCallback> toolCallbacks;
-    private final AgentTerminalResultParser resultParser;
-    private final ExecutorService callExecutor;
-    private final int maxToolCalls;
-    private final Duration timeout;
+    private final ChatModel chatModel; // DeepSeek 聊天模型
+    private final ToolCallingManager toolCallingManager; // 执行工具调用的管理器
+    private final List<ToolCallback> toolCallbacks; // 4 个工具的注册表（查找 validate_draft 用）
+    private final AgentTerminalResultParser resultParser; // 终态 JSON 严格解析器
+    private final ExecutorService callExecutor; // 单次调用线程池（超时/取消用）
+    private final int maxToolCalls; // 工具调用上限（默认 8）
+    private final Duration timeout; // 总时间预算（默认 60s）
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public ForumReActAgent(
@@ -90,8 +113,8 @@ public final class ForumReActAgent implements AgentRunner {
             AgentTerminalResultParser resultParser,
             ExecutorService callExecutor,
             int maxToolCalls,
-            Duration timeout
-    ) {
+            Duration timeout) {
+        // 构造期校验：非法参数直接失败（fail-fast）
         if (maxToolCalls < 1) {
             throw new IllegalArgumentException("maxToolCalls must be positive");
         }
@@ -100,21 +123,27 @@ public final class ForumReActAgent implements AgentRunner {
         }
         this.chatModel = chatModel;
         this.toolCallingManager = toolCallingManager;
-        this.toolCallbacks = List.copyOf(toolCallbacks);
+        this.toolCallbacks = List.copyOf(toolCallbacks); // 防御性不可变拷贝
         this.resultParser = resultParser;
         this.callExecutor = callExecutor;
         this.maxToolCalls = maxToolCalls;
         this.timeout = timeout;
     }
 
+    /**
+     * Agent 主循环（ReAct）。详见类注释。
+     */
     @Override
     public AgentTerminalResult run(
             AgentRunRequest request,
             AgentCancellationToken cancellation,
-            AgentRunObserver observer
-    ) {
+            AgentRunObserver observer) {
+        // 计算 60s 总预算的截止时刻（nanoTime，单调时钟不受系统时间调整影响）
         long deadline = System.nanoTime() + timeout.toNanos();
         ensureActive(cancellation, deadline);
+
+        // 构造 DeepSeek 调用选项：注册工具、关闭框架内部工具执行（由本类控制执行时机）、
+        // 低温 0.2（稳定输出）、强制 JSON 对象格式
         var options = DeepSeekChatOptions.builder()
                 .toolCallbacks(toolCallbacks)
                 .internalToolExecutionEnabled(false)
@@ -123,6 +152,7 @@ public final class ForumReActAgent implements AgentRunner {
                         .type(ResponseFormat.Type.JSON_OBJECT)
                         .build())
                 .build();
+        // 组装消息序列：系统提示 + 历史消息 + 当前用户请求（附带编辑器版本号）
         List<Message> messages = new ArrayList<>();
         messages.add(new SystemMessage(SYSTEM_PROMPT));
         messages.addAll(request.history());
@@ -132,68 +162,73 @@ public final class ForumReActAgent implements AgentRunner {
                 %s
                 """.formatted(request.editorVersion(), request.userMessage())));
         Prompt prompt = new Prompt(messages, options);
-        int toolCallCount = 0;
-        int terminalRepairAttempts = 0;
-        Set<Integer> knownTopicIds = new HashSet<>();
-        Map<Integer, String> knownTopics = new LinkedHashMap<>();
-        boolean draftValidationAttempted = false;
-        ValidatedDraft validatedDraft = null;
+
+        // 循环状态
+        int toolCallCount = 0; // 已消耗的工具调用次数
+        int terminalRepairAttempts = 0; // 已发起的终端修复次数
+        Set<Integer> knownTopicIds = new HashSet<>(); // 工具返回过的 topicId（引用白名单）
+        Map<Integer, String> knownTopics = new LinkedHashMap<>(); // topicId → 标题（保持顺序）
+        boolean draftValidationAttempted = false; // 本次运行是否调用过 validate_draft
+        ValidatedDraft validatedDraft = null; // 最近一次校验通过的草稿内容
 
         while (true) {
             Prompt currentPrompt = prompt;
+            // 1. 调用模型（在预算内执行，超时/取消会在内部抛出）
             ChatResponse response = executeWithinBudget(
-                    () -> chatModel.call(currentPrompt),
+                    () -> invokeModel(currentPrompt, cancellation),
                     cancellation,
-                    deadline
-            );
+                    deadline);
             if (response == null || response.getResult() == null || response.getResult().getOutput() == null) {
                 throw new AgentRunException(AgentRunFailure.INVALID_RESPONSE, "Model returned no response");
             }
             AssistantMessage output = response.getResult().getOutput();
+
+            // 2a. 兼容「工具编码的 QUESTION」：有些模型把 QUESTION 当工具调用返回
             AgentQuestionResult toolEncodedQuestion = toolEncodedQuestion(
                     output,
                     request.editorVersion(),
-                    knownTopicIds
-            );
+                    knownTopicIds);
             if (toolEncodedQuestion != null) {
                 return toolEncodedQuestion;
             }
+
+            // 2b. 无工具调用 → 模型给出终态文本（QUESTION 或 DRAFT）
             if (!response.hasToolCalls()) {
                 String content = output.getText();
                 try {
                     AgentTerminalResult result = resultParser.parse(
                             content,
                             request.editorVersion(),
-                            knownTopicIds
-                    );
+                            knownTopicIds);
+                    // 若模型直接给 DRAFT，但内容与「校验过的草稿」不一致 → 强制再校验
                     if (result instanceof AgentDraftResult draft
                             && (validatedDraft == null || !validatedDraft.matches(draft))) {
+                        // 本次运行从未调用过 validate_draft → 拒绝
                         if (!draftValidationAttempted) {
                             throw new AgentOutputValidationException(
-                                    "Draft was not checked by validate_draft"
-                            );
+                                    "Draft was not checked by validate_draft");
                         }
+                        // 工具调用额度不足 → 终局失败
                         if (toolCallCount >= maxToolCalls) {
                             throw new AgentRunException(
                                     AgentRunFailure.TOOL_LIMIT,
-                                    "Agent exceeded the tool call limit"
-                            );
+                                    "Agent exceeded the tool call limit");
                         }
                         toolCallCount++;
+                        // 运行时再校验：直接调用 validate_draft 工具，不过则拒绝
                         if (!revalidateDraft(draft, observer, cancellation, deadline)) {
                             throw new AgentOutputValidationException(
-                                    "Draft did not pass validate_draft"
-                            );
+                                    "Draft did not pass validate_draft");
                         }
                     }
                     return result;
                 } catch (AgentOutputValidationException exception) {
+                    // 可修复错误：发修复提示让模型重试（最多 2 次）
                     if (terminalRepairAttempts >= MAX_TERMINAL_REPAIR_ATTEMPTS) {
                         throw new AgentRunException(
                                 AgentRunFailure.INVALID_RESPONSE,
                                 "Model returned an invalid terminal result",
-                                exception
-                        );
+                                exception);
                     }
                     terminalRepairAttempts++;
                     List<Message> repairHistory = new ArrayList<>(currentPrompt.getInstructions());
@@ -204,60 +239,71 @@ public final class ForumReActAgent implements AgentRunner {
                 }
             }
 
+            // 3. 模型要求调用工具：先做额度检查（本次请求的调用数 + 已用的 ≤ 上限）
             int requestedCalls = output.getToolCalls().size();
             if (toolCallCount + requestedCalls > maxToolCalls) {
                 throw new AgentRunException(AgentRunFailure.TOOL_LIMIT, "Agent exceeded the tool call limit");
             }
+            // 通知观察者「工具开始」（前端显示时间线）
             output.getToolCalls().forEach(call -> observer.toolStarted(call.name(), call.arguments()));
+            // 执行工具调用（在预算内）
             ToolExecutionResult execution = executeWithinBudget(
                     () -> toolCallingManager.executeToolCalls(currentPrompt, response),
                     cancellation,
-                    deadline
-            );
+                    deadline);
             toolCallCount += requestedCalls;
+            // 4. 观察工具结果：收集引用白名单、识别 validate_draft 的结果
             ValidationObservation validation = recordToolResults(
                     output,
                     execution,
                     observer,
                     knownTopicIds,
-                    knownTopics
-            );
+                    knownTopics);
             if (validation.attempted()) {
                 draftValidationAttempted = true;
                 validatedDraft = validation.draft();
+                // 校验通过 → 直接以「校验参数」生成确定性 DRAFT 返回（不让模型自由发挥正文）
                 if (validatedDraft != null) {
                     return validatedDraft.toResult(request.editorVersion(), knownTopics);
                 }
             }
+            // 5. 把工具结果拼回对话历史，进入下一轮循环
             prompt = new Prompt(execution.conversationHistory(), options);
         }
     }
 
+    /**
+     * 运行时再校验草稿：绕过模型，直接调用 validate_draft 工具。
+     * 用于「模型输出 DRAFT 但内容与已校验内容不一致」的情况。
+     * 
+     * @return 校验是否通过
+     */
     private boolean revalidateDraft(
             AgentDraftResult draft,
             AgentRunObserver observer,
             AgentCancellationToken cancellation,
-            long deadline
-    ) {
+            long deadline) {
+        // 从注册表里找到 validate_draft 工具
         ToolCallback callback = toolCallbacks.stream()
                 .filter(tool -> "validate_draft".equals(tool.getToolDefinition().name()))
                 .findFirst()
                 .orElseThrow(() -> new AgentRunException(
                         AgentRunFailure.INVALID_RESPONSE,
-                        "validate_draft tool is unavailable"
-                ));
+                        "validate_draft tool is unavailable"));
+        // 构造工具参数（与模型会传入的字段一致）
         ObjectNode arguments = objectMapper.createObjectNode();
         arguments.put("title", draft.title());
         arguments.put("topicTypeId", draft.topicTypeId());
         arguments.put("bodyMarkdown", draft.bodyMarkdown());
         String serializedArguments = arguments.toString();
         observer.toolStarted("validate_draft", serializedArguments);
+        // 在预算内直接调用工具
         String responseData = executeWithinBudget(
                 () -> callback.call(serializedArguments),
                 cancellation,
-                deadline
-        );
+                deadline);
         observer.toolCompleted("validate_draft", responseData);
+        // 解析 valid 字段；任何解析异常都视为校验失败
         try {
             return objectMapper.readTree(responseData).path("valid").asBoolean(false);
         } catch (Exception ignored) {
@@ -265,13 +311,21 @@ public final class ForumReActAgent implements AgentRunner {
         }
     }
 
+    /**
+     * 记录一次工具执行的结果：
+     * - 逐个回调 observer.toolCompleted（推 SSE）\n
+     * - 从 search/read 工具结果里收集引用白名单\n
+     * - 识别 validate_draft 是否被调用、是否校验通过
+     * 
+     * @return 校验观察结果（是否尝试过校验 + 校验通过的草稿）
+     */
     private ValidationObservation recordToolResults(
             AssistantMessage assistantMessage,
             ToolExecutionResult execution,
             AgentRunObserver observer,
             Set<Integer> knownTopicIds,
-            Map<Integer, String> knownTopics
-    ) {
+            Map<Integer, String> knownTopics) {
+        // 没有工具响应 → 没有可观察内容
         if (execution.conversationHistory().isEmpty()) {
             return ValidationObservation.notAttempted();
         }
@@ -279,75 +333,82 @@ public final class ForumReActAgent implements AgentRunner {
         if (!(last instanceof ToolResponseMessage toolResponse)) {
             return ValidationObservation.notAttempted();
         }
+        // 按 callId 建立索引，方便把「响应」和「模型发出的调用」对应起来
         Map<String, AssistantMessage.ToolCall> callsById = new HashMap<>();
         assistantMessage.getToolCalls().forEach(call -> callsById.put(call.id(), call));
         boolean validationAttempted = false;
         ValidatedDraft validatedDraft = null;
         for (ToolResponseMessage.ToolResponse response : toolResponse.getResponses()) {
             observer.toolCompleted(response.name(), response.responseData());
+            // 检索类工具的结果 → 收集引用白名单
             if (CITATION_TOOLS.contains(response.name())) {
                 collectTopics(response.responseData(), knownTopicIds, knownTopics);
             }
+            // validate_draft → 记录校验结果
             if ("validate_draft".equals(response.name())) {
                 validationAttempted = true;
                 validatedDraft = validatedDraft(
                         matchingToolCall(assistantMessage, callsById.get(response.id()), response),
-                        response.responseData()
-                );
+                        response.responseData());
             }
         }
         return new ValidationObservation(validationAttempted, validatedDraft);
     }
 
+    /**
+     * 处理「工具编码的 QUESTION」：DeepSeek 有时不直接输出 JSON，而是把 QUESTION 当作工具调用。
+     * 把工具参数包一层 type=QUESTION 再走标准解析器，保证两条路径行为一致。
+     */
     private AgentQuestionResult toolEncodedQuestion(
             AssistantMessage output,
             int editorVersion,
-            Set<Integer> knownTopicIds
-    ) {
+            Set<Integer> knownTopicIds) {
+        // 找出名为 QUESTION 的工具调用
         List<AssistantMessage.ToolCall> questionCalls = output.getToolCalls().stream()
                 .filter(call -> "QUESTION".equalsIgnoreCase(call.name()))
                 .toList();
         if (questionCalls.isEmpty()) {
             return null;
         }
+        // 不允许「QUESTION 和其他工具调用混在一起」
         if (questionCalls.size() != 1 || output.getToolCalls().size() != 1) {
             throw new AgentRunException(
                     AgentRunFailure.INVALID_RESPONSE,
-                    "Model mixed a terminal QUESTION with tool calls"
-            );
+                    "Model mixed a terminal QUESTION with tool calls");
         }
         try {
             JsonNode arguments = objectMapper.readTree(questionCalls.get(0).arguments());
             if (!(arguments instanceof ObjectNode object)) {
                 throw new AgentOutputValidationException("QUESTION arguments must be a JSON object");
             }
+            // 把工具参数转成标准终态 JSON，走统一解析器
             ObjectNode terminal = object.deepCopy();
             terminal.put("type", "QUESTION");
             return (AgentQuestionResult) resultParser.parse(
                     terminal.toString(),
                     editorVersion,
-                    knownTopicIds
-            );
+                    knownTopicIds);
         } catch (AgentOutputValidationException exception) {
             throw new AgentRunException(
                     AgentRunFailure.INVALID_RESPONSE,
                     "Model returned an invalid tool-encoded QUESTION",
-                    exception
-            );
+                    exception);
         } catch (Exception exception) {
             throw new AgentRunException(
                     AgentRunFailure.INVALID_RESPONSE,
                     "Model returned malformed QUESTION arguments",
-                    exception
-            );
+                    exception);
         }
     }
 
+    /**
+     * 把工具响应和对应的模型调用匹配上（用于取 validate_draft 的参数）。\n
+     * 优先按 callId 精确匹配；失败时退化为「按名称唯一匹配」（容错部分模型工具 id 不一致的情况）。
+     */
     private AssistantMessage.ToolCall matchingToolCall(
             AssistantMessage assistantMessage,
             AssistantMessage.ToolCall idMatch,
-            ToolResponseMessage.ToolResponse response
-    ) {
+            ToolResponseMessage.ToolResponse response) {
         if (idMatch != null && response.name().equals(idMatch.name())) {
             return idMatch;
         }
@@ -357,6 +418,10 @@ public final class ForumReActAgent implements AgentRunner {
         return nameMatches.size() == 1 ? nameMatches.get(0) : null;
     }
 
+    /**
+     * 从 validate_draft 的响应里提取「校验通过的草稿」。\n
+     * 只有 valid=true 才返回，且字段必须完整合法；否则返回 null（视为校验未通过）。
+     */
     private ValidatedDraft validatedDraft(AssistantMessage.ToolCall call, String responseData) {
         if (call == null) {
             return null;
@@ -379,6 +444,7 @@ public final class ForumReActAgent implements AgentRunner {
         }
     }
 
+    /** 取必填文本字段（工具参数解析用）。 */
     private String requiredText(JsonNode node, String field) {
         JsonNode value = node.get(field);
         if (value == null || !value.isTextual()) {
@@ -387,23 +453,26 @@ public final class ForumReActAgent implements AgentRunner {
         return value.textValue();
     }
 
+    /** 从工具结果 JSON 字符串里收集引用白名单。 */
     private void collectTopics(
             String responseData,
             Set<Integer> knownTopicIds,
-            Map<Integer, String> knownTopics
-    ) {
+            Map<Integer, String> knownTopics) {
         try {
             collectTopics(objectMapper.readTree(responseData), knownTopicIds, knownTopics);
         } catch (Exception ignored) {
-            // A malformed tool result cannot authorize a citation.
+            // 格式错误的工具结果不能授权任何引用（安全优先）
         }
     }
 
+    /**
+     * 递归遍历 JSON，提取所有 topicId / title 对。\n
+     * 只要是正整数 topicId 就进白名单，标题非空则记录（putIfAbsent 保持先到先得）。
+     */
     private void collectTopics(
             JsonNode node,
             Set<Integer> knownTopicIds,
-            Map<Integer, String> knownTopics
-    ) {
+            Map<Integer, String> knownTopics) {
         if (node == null) {
             return;
         }
@@ -423,11 +492,64 @@ public final class ForumReActAgent implements AgentRunner {
         }
     }
 
+    /**
+     * 调用模型：优先走流式（stream），若模型不支持流式则降级为一次性 call。
+     * 
+     * @param cancellation 参数仅为保持签名一致（实际取消由 executeWithinBudget 统一处理）
+     */
+    private ChatResponse invokeModel(
+            Prompt prompt,
+            AgentCancellationToken cancellation) {
+        try {
+            return streamResponse((StreamingChatModel) chatModel, prompt);
+        } catch (UnsupportedOperationException unsupported) {
+            return chatModel.call(prompt);
+        }
+    }
+
+    /**
+     * 流式聚合：DeepSeek 流式返回多个 chunk（文本片段 / 工具调用片段），\n
+     * 这里按 toolCall id 合并（同一 id 的多个片段会覆盖成最新一份），\n
+     * 文本全部拼接，最后合成一个完整的 AssistantMessage。
+     */
+    private ChatResponse streamResponse(
+            StreamingChatModel model,
+            Prompt prompt) {
+        Map<String, AssistantMessage.ToolCall> toolCalls = new LinkedHashMap<>();
+        StringBuilder text = new StringBuilder();
+        model.stream(prompt).doOnNext(chunk -> {
+            if (chunk.getResult() == null || chunk.getResult().getOutput() == null) {
+                return;
+            }
+            AssistantMessage output = chunk.getResult().getOutput();
+            if (output.getText() != null && !output.getText().isEmpty()) {
+                text.append(output.getText());
+            }
+            if (output.getToolCalls() != null) {
+                output.getToolCalls().forEach(toolCall -> {
+                    if (toolCall.id() != null) {
+                        toolCalls.put(toolCall.id(), toolCall);
+                    }
+                });
+            }
+        }).blockLast();
+        AssistantMessage merged = AssistantMessage.builder()
+                .content(text.toString())
+                .toolCalls(new ArrayList<>(toolCalls.values()))
+                .build();
+        return new ChatResponse(List.of(new Generation(merged)));
+    }
+
+    /**
+     * 在 60s 预算内执行任意动作（模型调用或工具调用）的核心机制：\n
+     * - 提交到独立线程池（callExecutor）\n
+     * - 每 50ms 轮询一次：检查取消/超时，超时则 future.cancel(true) 中断\n
+     * - 捕获中断/执行异常并转成 AgentRunException
+     */
     private <T> T executeWithinBudget(
             Callable<T> action,
             AgentCancellationToken cancellation,
-            long deadline
-    ) {
+            long deadline) {
         ensureActive(cancellation, deadline);
         Future<T> future = callExecutor.submit(action);
         try {
@@ -438,7 +560,7 @@ public final class ForumReActAgent implements AgentRunner {
                 try {
                     return future.get(wait, TimeUnit.NANOSECONDS);
                 } catch (TimeoutException ignored) {
-                    // Recheck cancellation and deadline at a bounded interval.
+                    // 到期未完成：回到循环顶部重新检查取消/超时（有界轮询）
                 }
             }
         } catch (InterruptedException exception) {
@@ -447,6 +569,7 @@ public final class ForumReActAgent implements AgentRunner {
             throw new AgentRunException(AgentRunFailure.CANCELLED, "Agent run was interrupted", exception);
         } catch (ExecutionException exception) {
             Throwable cause = exception.getCause();
+            // 保留内部抛出的 AgentRunException（分类信息不丢失）
             if (cause instanceof AgentRunException runException) {
                 throw runException;
             }
@@ -454,15 +577,18 @@ public final class ForumReActAgent implements AgentRunner {
         }
     }
 
+    /** 无 future 版本的活跃检查（用于动作开始前）。 */
     private void ensureActive(AgentCancellationToken cancellation, long deadline) {
         ensureActive(cancellation, deadline, null);
     }
 
+    /**
+     * 活跃检查：取消或超时则中断（若有 future）并抛对应异常。
+     */
     private void ensureActive(
             AgentCancellationToken cancellation,
             long deadline,
-            Future<?> future
-    ) {
+            Future<?> future) {
         if (cancellation.isCancelled()) {
             if (future != null) {
                 future.cancel(true);
@@ -477,6 +603,11 @@ public final class ForumReActAgent implements AgentRunner {
         }
     }
 
+    /**
+     * 校验通过的草稿快照（内部 record）。\n
+     * - matches：判断模型给出的 DRAFT 是否与本次校验内容一致\n
+     * - toResult：把校验参数 + 白名单引用打包成最终的 AgentDraftResult（确定性输出）
+     */
     private record ValidatedDraft(String title, int topicTypeId, String bodyMarkdown) {
         private boolean matches(AgentDraftResult draft) {
             return title.equals(draft.title())
@@ -485,6 +616,7 @@ public final class ForumReActAgent implements AgentRunner {
         }
 
         private AgentDraftResult toResult(int editorVersion, Map<Integer, String> knownTopics) {
+            // 引用最多 6 条，按工具返回顺序
             List<AgentCitation> citations = knownTopics.entrySet().stream()
                     .limit(6)
                     .map(entry -> new AgentCitation(entry.getKey(), entry.getValue()))
@@ -493,6 +625,7 @@ public final class ForumReActAgent implements AgentRunner {
         }
     }
 
+    /** 校验观察结果（内部 record）：本次是否尝试过校验 + 校验通过的草稿。 */
     private record ValidationObservation(boolean attempted, ValidatedDraft draft) {
         private static ValidationObservation notAttempted() {
             return new ValidationObservation(false, null);

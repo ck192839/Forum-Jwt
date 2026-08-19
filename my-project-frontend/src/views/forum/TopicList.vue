@@ -22,7 +22,7 @@ import router from "@/router";
 import TopicTag from "@/components/TopicTag.vue";
 import TopicCollectList from "@/components/TopicCollectList.vue";
 import {apiForumTopicList, apiForumTopTopics, apiForumWeather} from "@/net/api/forum";
-import {pendingDraftApplication} from "@/agent/editorBridge";
+import {editorOpenRequest} from "@/agent/editorBridge";
 
 const store = useStore()
 
@@ -43,10 +43,12 @@ const topics = reactive({
 const collects = ref(false)
 
 watch(() => topics.type, () => resetList(), {immediate: true})
-watch(pendingDraftApplication, pending => {
-    if(pending && pending.targetEditorId == null)
+watch(editorOpenRequest, request => {
+    if(request && (request.editorId == null || request.editorId === 'topic-editor:new-topic')) {
         editor.value = true
-})
+        editorOpenRequest.value = null
+    }
+}, {immediate: true})
 
 const today = computed(() => {
     const date = new Date()
@@ -230,12 +232,8 @@ onMounted(() => {
                     <el-divider style="margin: 10px 0"/>
                 </div>
                 <div style="display: grid;grid-template-columns: repeat(2, 1fr);grid-gap: 10px;margin-top: 10px">
-                    <div class="friend-link">
-                        <el-image style="height: 100%" src="https://element-plus.org/images/js-design-banner.jpg"/>
-                    </div>
-                    <div class="friend-link">
-                        <el-image style="height: 100%" src="https://element-plus.org/images/vform-banner.png"/>
-                    </div>
+                    <a class="friend-link" href="https://element-plus.org/" target="_blank" rel="noopener">Element Plus</a>
+                    <a class="friend-link" href="https://vform.element-plus.org/" target="_blank" rel="noopener">VForm</a>
                 </div>
             </div>
         </div>
@@ -339,8 +337,19 @@ onMounted(() => {
 }
 
 .friend-link {
+    display: block;
     border-radius: 5px;
-    overflow: hidden;
+    background-color: #f5f7fa;
+    color: var(--el-text-color-primary);
+    font-size: 14px;
+    text-align: center;
+    line-height: 48px;
+    text-decoration: none;
+    transition: background-color .2s;
+
+    &:hover {
+        background-color: #eef1f6;
+    }
 }
 
 .create-topic {

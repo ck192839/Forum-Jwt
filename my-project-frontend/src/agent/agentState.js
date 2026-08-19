@@ -46,6 +46,13 @@ export function restoreAgentSession(state, detail) {
       state.editorContext = null
     }
   }
+
+  if (detail.draft?.targetEditorId) {
+    state.editorContext = {
+      editorId: detail.draft.targetEditorId,
+      editorVersion: detail.draft.editorVersion
+    }
+  }
 }
 
 export function applyAgentEvent(state, event) {
@@ -97,6 +104,7 @@ export function applyAgentEvent(state, event) {
       }
       break
     case 'question':
+      state.messages.push({ role: 'ASSISTANT', content: payload.question, createdAt: new Date().toISOString() })
       state.question = payload.question
       state.editorContext = payload.targetEditorId
         ? {
@@ -106,6 +114,7 @@ export function applyAgentEvent(state, event) {
         : null
       break
     case 'draft_ready':
+      state.messages.push({ role: 'ASSISTANT', content: '已生成草稿：《' + payload.title + '》', createdAt: new Date().toISOString() })
       state.draft = {
         title: payload.title,
         topicTypeId: payload.topicTypeId,
@@ -115,7 +124,9 @@ export function applyAgentEvent(state, event) {
         editorVersion: payload.basedOnEditorVersion,
         targetEditorId: payload.targetEditorId ?? null
       }
-      state.editorContext = null
+      state.editorContext = payload.targetEditorId
+        ? { editorId: payload.targetEditorId, editorVersion: payload.basedOnEditorVersion }
+        : null
       break
     case 'run_completed':
       state.runStatus = String(payload.status || 'completed').toLowerCase()

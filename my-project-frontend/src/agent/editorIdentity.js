@@ -20,6 +20,17 @@ export function nextEditorVersion(editorKey) {
   }
 }
 
+export function currentEditorVersion(editorKey) {
+  const key = normalizeKey(editorKey)
+  const storageKey = VERSION_KEY_PREFIX + key
+  try {
+    const current = Number.parseInt(globalThis.sessionStorage.getItem(storageKey) || '0', 10)
+    return Number.isFinite(current) ? current : 0
+  } catch {
+    return fallbackVersions.get(key) || 0
+  }
+}
+
 function normalizeKey(editorKey) {
   const value = String(editorKey || '').trim()
   if (!value) throw new Error('editorKey is required')

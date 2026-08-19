@@ -11,9 +11,11 @@ import {
   VideoPause
 } from '@element-plus/icons-vue'
 import { createAgentAssistantController } from './useAgentAssistant'
+import router from '@/router'
 import {
   editorOptimizationRequest,
-  publishDraftApplication
+  publishDraftApplication,
+  requestEditorOpen
 } from './editorBridge'
 
 const emit = defineEmits(['apply-draft'])
@@ -33,7 +35,26 @@ const {
   cancel
 } = controller
 
+let optimizationEditorId = null
+
 const canSend = computed(() => prompt.value.trim().length > 0 && !submitting.value)
+const visibleMessages = computed(() =>
+  state.messages.filter(message =>
+    message.role !== 'ASSISTANT' || !isTerminalJson(message.content)
+  )
+)
+
+function isTerminalJson(content) {
+  if (typeof content !== 'string' || !content.trim().startsWith('{')) return false
+  try {
+    const parsed = JSON.parse(content)
+    return !!parsed && typeof parsed === 'object'
+      && (parsed.type === 'DRAFT' || parsed.type === 'QUESTION' || 'bodyMarkdown' in parsed)
+  } catch {
+    return false
+  }
+}
+
 const toolLabels = {
   list_topic_types: '获取板块',
   search_similar_topics: '查找相似帖子',
@@ -48,10 +69,30 @@ async function openAssistant() {
 
 function applyDraft(draft) {
   publishDraftApplication(draft)
+  const target = draft.targetEditorId
+  let targetPage = null
+  let openEditorId = target
+  if (target == null) {
+    targetPage = '/index'
+    openEditorId = 'topic-editor:new-topic'
+  } else if (target.startsWith('topic-editor:topic-')) {
+    targetPage = `/index/topic-detail/${decodeURIComponent(target.slice('topic-editor:topic-'.length))}`
+  } else if (target === 'topic-editor:new-topic') {
+    targetPage = '/index'
+  } else {
+    openEditorId = null
+  }
+  if (targetPage && router.currentRoute.value.path !== targetPage) {
+    router.push(targetPage)
+  }
+  if (openEditorId) {
+    requestEditorOpen(openEditorId)
+  }
   emit('apply-draft', draft)
 }
 
 function sessionLabel(session) {
+  if (session.title) return session.title
   const date = session.updatedAt ? new Date(session.updatedAt).toLocaleString('zh-CN') : `#${session.id}`
   return session.status === 'ACTIVE' ? `${date} · 进行中` : date
 }
@@ -67,12 +108,24 @@ watch(editorOptimizationRequest, async request => {
   if (!request) return
   open.value = true
   await initialize()
+  const newTopic = request.editorId === 'topic-editor:new-topic'
+  if (request.editorId && (newTopic || request.editorId !== optimizationEditorId)) {
+    await newSession()
+  }
+  if (request.editorId) {
+    optimizationEditorId = request.editorId
+  }
   await submit({
     editorId: request.editorId,
     editorVersion: request.editorVersion,
     editorDraft: request.editorDraft
   })
 })
+
+async function resetAndNewSession() {
+  optimizationEditorId = null
+  await newSession()
+}
 </script>
 
 <template>
@@ -112,7 +165,7 @@ watch(editorOptimizationRequest, async request => {
             </option>
           </select>
           <button type="button" class="icon-button" title="新建会话" aria-label="新建会话"
-                  :disabled="submitting" @click="newSession">
+                  :disabled="submitting" @click="resetAndNewSession">
             <Plus/>
           </button>
           <button type="button" class="icon-button danger" title="删除会话" aria-label="删除会话"
@@ -128,7 +181,7 @@ watch(editorOptimizationRequest, async request => {
               描述你准备发布的内容
             </div>
 
-            <div v-for="(message, index) in state.messages" :key="message.id || index"
+            <div v-for="(message, index) in visibleMessages" :key="message.id || index"
                  :class="['message', message.role.toLowerCase()]">
               {{ message.content }}
             </div>
@@ -153,10 +206,6 @@ watch(editorOptimizationRequest, async request => {
                 <span>#{{ citation.topicId }}</span>{{ citation.title }}
               </RouterLink>
             </nav>
-
-            <div v-if="state.question" class="message assistant question">
-              {{ state.question }}
-            </div>
 
             <section v-if="state.draft" class="draft-result">
               <div class="draft-heading">

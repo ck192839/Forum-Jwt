@@ -95,8 +95,9 @@ apiForumTypes(data => {
     <div class="main-content" v-loading="loading" element-loading-text="正在进入，请稍后...">
         <el-container style="height: 100%" v-if="!loading">
             <el-header class="main-content-header">
-                <div style="width: 320px;height: 32px">
-                    <el-image class="logo" src="https://element-plus.org/images/element-plus-logo.svg"/>
+                <div style="width: 320px;height: 32px;display: flex;align-items: center;gap: 8px">
+                    <el-icon :size="24" color="#2563eb"><School/></el-icon>
+                    <span style="font-size: 18px;font-weight: bold;white-space: nowrap">校园社区</span>
                 </div>
                 <div style="flex: 1;padding: 0 20px;text-align: center">
                     <el-autocomplete v-model="searchInput.text" style="width: 100%;max-width: 500px"
@@ -279,10 +280,6 @@ apiForumTypes(data => {
     display: flex;
     align-items: center;
     box-sizing: border-box;
-
-    .logo {
-        height: 32px;
-    }
 
     .user-info {
         display: flex;

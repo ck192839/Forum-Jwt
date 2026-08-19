@@ -24,56 +24,97 @@ import java.util.Arrays;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+/**
+ * Agent 运行时的核心装配类：把所有 Agent 组件组合成一个可用的闭环。
+ *
+ * 装配顺序（依赖方向）：
+ * 工具层：ForumAuthoringTools（4 个 @Tool 方法）
+ * → MethodToolCallbackProvider 转成 ToolCallback 列表 → ForumToolCallbacks
+ * 解析层：AgentTerminalResultParser（严格解析 DRAFT/QUESTION）
+ * 核心层：ForumReActAgent（ReAct 循环，依赖 ChatModel + 工具 + 解析器 + 两个线程池）
+ * 编排层：AgentRunService（会话编排 + 事件落库 + SSE 推送）
+ *
+ * 重要：AgentRunService / ForumReActAgent 都在这里用 new 显式创建，
+ * 不是组件扫描，所以构造器不需要 @Autowired（Spring 不参与构造器选择）。
+ */
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties(AgentRuntimeProperties.class)
 public class AgentRuntimeConfiguration {
 
+    /**
+     * 声明式工具对象：4 个 @Tool 方法（list_topic_types / search_similar_topics /
+     * read_public_topic / validate_draft）。
+     * 依赖论坛的只读 Mapper + 混合检索 + 违禁词工具，构成 Agent 唯一的数据访问面。
+     */
     @Bean
     ForumAuthoringTools forumAuthoringTools(
             TopicTypeMapper topicTypeMapper,
             TopicMapper topicMapper,
             HybridTopicSearchService searchService,
-            ProhibitedUtils prohibitedUtils
-    ) {
+            ProhibitedUtils prohibitedUtils) {
         return new ForumAuthoringTools(topicTypeMapper, topicMapper, searchService, prohibitedUtils);
     }
 
+    /**
+     * 把 @Tool 注解的方法反射转成 Spring AI 的 ToolCallback 列表，
+     * 包装成不可变的 ForumToolCallbacks（record）。
+     */
     @Bean
     ForumToolCallbacks forumToolCallbacks(ForumAuthoringTools tools) {
         return new ForumToolCallbacks(Arrays.asList(
                 MethodToolCallbackProvider.builder()
                         .toolObjects(tools)
                         .build()
-                        .getToolCallbacks()
-        ));
+                        .getToolCallbacks()));
     }
 
+    /** 终端结果解析器：把模型输出的 JSON 严格解析成 QUESTION / DRAFT。 */
     @Bean
     AgentTerminalResultParser agentTerminalResultParser(ObjectMapper objectMapper) {
         return new AgentTerminalResultParser(objectMapper);
     }
 
+    /**
+     * 工具调用管理器：负责按模型返回的 toolCalls 执行工具并拼接对话历史。
+     * internalToolExecutionEnabled 关闭（在 Agent 里配置），由 ForumReActAgent 手动控制执行时机。
+     */
     @Bean
     ToolCallingManager forumToolCallingManager() {
         return ToolCallingManager.builder().build();
     }
 
+    /**
+     * 「单次调用」线程池（默认 8 线程，线程名前缀 agent-call-）。
+     * 用途：每次模型调用 / 工具调用都丢到这里执行，
+     * 这样 ForumReActAgent 才能用 future.get(timeout) 实现超时中断和取消。
+     * 必须独立于 run 线程池，否则超时取消会互相阻塞。
+     */
     @Bean(name = "agentCallExecutor", destroyMethod = "shutdown")
     ExecutorService agentCallExecutor(AgentRuntimeProperties properties) {
         return Executors.newFixedThreadPool(
                 properties.getCallThreads(),
-                new CustomizableThreadFactory("agent-call-")
-        );
+                new CustomizableThreadFactory("agent-call-"));
     }
 
+    /**
+     * 「整个 run」线程池（默认 4 线程，线程名前缀 agent-run-）。
+     * 用途：每个 Agent 会话的 run 在这里异步执行，不阻塞 HTTP 请求线程。
+     */
     @Bean(name = "agentRunExecutor", destroyMethod = "shutdown")
     ExecutorService agentRunExecutor(AgentRuntimeProperties properties) {
         return Executors.newFixedThreadPool(
                 properties.getRunThreads(),
-                new CustomizableThreadFactory("agent-run-")
-        );
+                new CustomizableThreadFactory("agent-run-"));
     }
 
+    /**
+     * 核心 Agent：ReAct 循环。
+     * 参数说明：
+     * - chatModel ：DeepSeek 聊天模型（支持流式）
+     * - toolCallingManager / callbacks：工具执行能力
+     * - callExecutor ：单次调用线程池（超时/取消用）
+     * - maxToolCalls / timeout：硬性预算（默认 8 次 / 60 秒）
+     */
     @Bean
     ForumReActAgent forumReActAgent(
             ChatModel chatModel,
@@ -81,8 +122,7 @@ public class AgentRuntimeConfiguration {
             ForumToolCallbacks callbacks,
             AgentTerminalResultParser resultParser,
             @Qualifier("agentCallExecutor") ExecutorService callExecutor,
-            AgentRuntimeProperties properties
-    ) {
+            AgentRuntimeProperties properties) {
         return new ForumReActAgent(
                 chatModel,
                 toolCallingManager,
@@ -90,17 +130,19 @@ public class AgentRuntimeConfiguration {
                 resultParser,
                 callExecutor,
                 properties.getMaxToolCalls(),
-                properties.getTimeout()
-        );
+                properties.getTimeout());
     }
 
+    /**
+     * 运行编排服务：会话加载 → 消息落库 → 异步执行 Agent → 事件落库 + SSE 推送。
+     * 注意：这里用 4 参构造器（runId 用默认 UUID），测试里用 5 参构造器注入固定 runId。
+     */
     @Bean
     AgentRunService agentRunService(
             AgentSessionService sessionService,
             ForumReActAgent agent,
             @Qualifier("agentRunExecutor") ExecutorService runExecutor,
-            ObjectMapper objectMapper
-    ) {
+            ObjectMapper objectMapper) {
         return new AgentRunService(sessionService, agent, runExecutor, objectMapper);
     }
 }

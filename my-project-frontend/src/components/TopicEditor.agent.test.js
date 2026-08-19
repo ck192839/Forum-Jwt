@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { enableAutoUnmount, mount } from '@vue/test-utils'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import {
   editorOptimizationRequest,
   pendingDraftApplication,
@@ -122,7 +122,7 @@ describe('TopicEditor Agent integration', () => {
     await optimizeButton.trigger('click')
 
     expect(editorOptimizationRequest.value).toMatchObject({
-      editorVersion: 3,
+      editorVersion: 2,
       editorDraft: { title: 'User title' }
     })
   })
@@ -228,7 +228,7 @@ describe('TopicEditor Agent integration', () => {
     })
 
     const first = mountEditor()
-    await first.get('.open-drawer').trigger('click')
+    await flushPromises()
     await first.get('input').setValue('Before remount')
     const firstOptimize = first.findAll('button').find(button => button.text().includes('AI 优化'))
     await firstOptimize.trigger('click')
@@ -236,7 +236,7 @@ describe('TopicEditor Agent integration', () => {
     first.unmount()
 
     const restored = mountEditor()
-    await restored.get('.open-drawer').trigger('click')
+    await flushPromises()
     await restored.get('input').setValue('After remount')
     const restoredOptimize = restored.findAll('button').find(button => button.text().includes('AI 优化'))
     await restoredOptimize.trigger('click')

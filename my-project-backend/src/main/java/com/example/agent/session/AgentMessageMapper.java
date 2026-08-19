@@ -7,6 +7,10 @@ import org.apache.ibatis.annotations.Select;
 
 import java.util.List;
 
+/**
+ * 消息表 Mapper：按会话查询全部消息（按 id 升序 = 时间顺序）。
+ * 表结构：agent_message(id, session_id, role, content, created_at)
+ */
 @Mapper
 public interface AgentMessageMapper extends BaseMapper<AgentMessage> {
     @Select("""

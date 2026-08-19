@@ -41,6 +41,10 @@ describe('agent state', () => {
     expect(state.citations).toEqual([{ topicId: 12, title: '校园网指南' }])
     expect(state.draft.version).toBe(2)
     expect(state.draft.targetEditorId).toBe('topic-editor-4')
+    expect(state.editorContext).toEqual({
+      editorId: 'topic-editor-4',
+      editorVersion: 4
+    })
   })
 
   test('merges the typed live event stream without exposing internal reasoning', () => {
@@ -73,6 +77,10 @@ describe('agent state', () => {
     expect(state.timeline[0].status).toBe('completed')
     expect(state.citations).toHaveLength(1)
     expect(state.question).toBe('适用于哪个宿舍楼？')
+    expect(state.messages).toEqual([
+      { role: 'ASSISTANT', content: '适用于哪个宿舍楼？', createdAt: expect.any(String) },
+      { role: 'ASSISTANT', content: '已生成草稿：《宿舍网络配置指南》', createdAt: expect.any(String) }
+    ])
     expect(state.draft).toMatchObject({
       version: 3,
       editorVersion: 5,
@@ -108,7 +116,7 @@ describe('agent state', () => {
     expect(state.draft).toBeNull()
   })
 
-  test('retains editor context across a question and clears it when a draft arrives', () => {
+  test('retains the target editor in editor context after a draft arrives', () => {
     const state = createAgentState()
 
     applyAgentEvent(state, {
@@ -134,6 +142,27 @@ describe('agent state', () => {
         draftVersion: 1,
         basedOnEditorVersion: 8,
         targetEditorId: 'topic-editor-question'
+      }
+    })
+
+    expect(state.editorContext).toEqual({
+      editorId: 'topic-editor-question',
+      editorVersion: 8
+    })
+  })
+
+  test('clears editor context when a draft has no target editor', () => {
+    const state = createAgentState()
+
+    applyAgentEvent(state, {
+      type: 'draft_ready',
+      payload: {
+        title: 'New topic draft',
+        topicTypeId: 1,
+        bodyMarkdown: 'Body',
+        draftVersion: 1,
+        basedOnEditorVersion: 0,
+        targetEditorId: null
       }
     })
 

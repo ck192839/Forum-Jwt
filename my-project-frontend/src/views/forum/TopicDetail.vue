@@ -1,6 +1,6 @@
 <script setup>
 import {useRoute} from "vue-router";
-import {reactive, ref} from "vue";
+import {computed, reactive, ref, watch} from "vue";
 import {
     ArrowLeft,
     ChatSquare,
@@ -18,22 +18,25 @@ import Card from "@/components/Card.vue";
 import router from "@/router";
 import TopicTag from "@/components/TopicTag.vue";
 import InteractButton from "@/components/InteractButton.vue";
-import {ElMessage} from "element-plus";
+import {ElMessage, ElMessageBox} from "element-plus";
 import {useStore} from "@/store";
 import TopicEditor from "@/components/TopicEditor.vue";
 import TopicCommentEditor from "@/components/TopicCommentEditor.vue";
+import { editorOpenRequest } from "@/agent/editorBridge";
+import { stableEditorId } from "@/agent/editorIdentity";
 import {
     apiForumCommentDelete,
     apiForumComments,
     apiForumInteract,
     apiForumTopic,
-    apiForumUpdateTopic
+    apiForumUpdateTopic,
+    apiForumUserTopicDelete
 } from "@/net/api/forum";
 
 const route = useRoute()
 const store = useStore()
 
-const tid = route.params.tid
+const tid = computed(() => route.params.tid)
 
 const topic = reactive({
     data: null,
@@ -43,13 +46,32 @@ const topic = reactive({
     page: 1
 })
 const edit = ref(false)
+watch(editorOpenRequest, request => {
+    if(request && request.editorId === stableEditorId(`topic-${route.params.tid}`)) {
+        edit.value = true
+        editorOpenRequest.value = null
+    }
+}, {immediate: true})
+
+watch(() => route.params.tid, (newTid) => {
+    if (!newTid) return
+    edit.value = false
+    topic.data = null
+    topic.comments = null
+    init()
+    const request = editorOpenRequest.value
+    if(request && request.editorId === stableEditorId(`topic-${newTid}`)) {
+        edit.value = true
+        editorOpenRequest.value = null
+    }
+})
 const comment = reactive({
     show: false,
     text: '',
     quote: null
 })
 
-const init = () => apiForumTopic(tid, data => {
+const init = () => apiForumTopic(tid.value, data => {
     topic.data = data
     topic.like = data.interact.like
     topic.collect = data.interact.collect
@@ -64,12 +86,12 @@ function convertToHtml(content) {
 }
 
 function interact(type, message) {
-    apiForumInteract(tid, type, topic, message)
+    apiForumInteract(tid.value, type, topic, message)
 }
 
 function updateTopic(editor) {
     apiForumUpdateTopic({
-        id: tid,
+        id: tid.value,
         type: editor.type.id,
         title: editor.title,
         content: editor.text
@@ -83,12 +105,12 @@ function updateTopic(editor) {
 function loadComments(page) {
     topic.comments = null
     topic.page = page
-    apiForumComments(tid, page - 1, data => topic.comments = data)
+    apiForumComments(tid.value, page - 1, data => topic.comments = data)
 }
 
 function onCommentAdd() {
     comment.show = false
-    apiForumTopic(tid, data => {
+    apiForumTopic(tid.value, data => {
         topic.data = data
         topic.like = data.interact.like
         topic.collect = data.interact.collect
@@ -96,10 +118,23 @@ function onCommentAdd() {
     })
 }
 
+function deleteTopic() {
+    ElMessageBox.confirm('删除后不可恢复，确定要删除这篇帖子吗？', '删除帖子', {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        type: 'warning'
+    }).then(() => {
+        apiForumUserTopicDelete(tid.value, () => {
+            ElMessage.success('帖子删除成功！')
+            router.push('/index')
+        })
+    }).catch(() => {})
+}
+
 function deleteComment(id) {
     apiForumCommentDelete(id, () => {
         ElMessage.success('删除评论成功！')
-        apiForumTopic(tid, data => {
+        apiForumTopic(tid.value, data => {
             topic.data = data
             topic.like = data.interact.like
             topic.collect = data.interact.collect
@@ -166,6 +201,12 @@ function deleteComment(id) {
                                      :disabled="topic.data.locked"
                                      v-if="store.user.id === topic.data.user.id">
                         <el-icon><EditPen/></el-icon>
+                    </interact-button>
+                    <interact-button name="删除帖子" color="red" :check="false"
+                                     @check="deleteTopic" style="margin-right: 20px"
+                                     :disabled="topic.data.locked"
+                                     v-if="store.user.id === topic.data.user.id">
+                        <el-icon><Delete/></el-icon>
                     </interact-button>
                     <interact-button name="点个赞吧" check-name="已点赞" color="pink" :check="topic.like"
                                      @check="interact('like', '点赞')">
@@ -307,6 +348,14 @@ function deleteComment(id) {
             line-height: 22px;
             opacity: 0.8;
             flex: 1;
+
+            :deep(img) {
+                max-width: 100%;
+                height: auto;
+                display: block;
+                margin: 4px 0;
+                border-radius: 4px;
+            }
         }
     }
 }

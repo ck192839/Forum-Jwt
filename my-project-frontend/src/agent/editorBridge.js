@@ -2,6 +2,7 @@ import { shallowRef } from 'vue'
 
 export const editorOptimizationRequest = shallowRef(null)
 export const pendingDraftApplication = shallowRef(null)
+export const editorOpenRequest = shallowRef(null)
 
 let requestSequence = 0
 
@@ -20,6 +21,10 @@ export function publishDraftApplication(draft) {
   }
 }
 
+export function requestEditorOpen(editorId) {
+  editorOpenRequest.value = { editorId, requestId: ++requestSequence }
+}
+
 export function consumeDraftApplication(editorId, acceptsUntargeted, currentEditorVersion) {
   const pending = pendingDraftApplication.value
   if (!pending) return null
@@ -28,16 +33,14 @@ export function consumeDraftApplication(editorId, acceptsUntargeted, currentEdit
   if (!targetsEditor && !targetsNewTopic) return null
 
   pendingDraftApplication.value = null
-  if (targetsNewTopic) {
-    return {
-      ...pending.draft,
-      editorVersion: currentEditorVersion ?? pending.draft.editorVersion
-    }
+  return {
+    ...pending.draft,
+    editorVersion: currentEditorVersion ?? pending.draft.editorVersion
   }
-  return pending.draft
 }
 
 export function resetEditorBridge() {
   editorOptimizationRequest.value = null
   pendingDraftApplication.value = null
+  editorOpenRequest.value = null
 }

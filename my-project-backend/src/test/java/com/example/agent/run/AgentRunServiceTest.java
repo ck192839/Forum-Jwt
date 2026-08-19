@@ -51,21 +51,18 @@ class AgentRunServiceTest {
                 7,
                 99L,
                 new AgentRunCommand("Help me write", 4, null, null, null, "topic-editor-question"),
-                sink
-        );
+                sink);
 
         assertEquals("run-1", runId);
         assertEquals(List.of(
                 AgentSseEventType.RUN_STARTED,
                 AgentSseEventType.TOOL_STARTED,
                 AgentSseEventType.TOOL_COMPLETED,
-                AgentSseEventType.MESSAGE_DELTA,
                 AgentSseEventType.QUESTION,
-                AgentSseEventType.RUN_COMPLETED
-        ), sink.types());
-        assertEquals(List.of("run-1:1", "run-1:2", "run-1:3", "run-1:4", "run-1:5", "run-1:6"), sink.ids());
+                AgentSseEventType.RUN_COMPLETED), sink.types());
+        assertEquals(List.of("run-1:1", "run-1:2", "run-1:3", "run-1:4", "run-1:5"), sink.ids());
         assertTrue(sink.completed);
-        QuestionPayload question = (QuestionPayload) sink.payloads.get(4);
+        QuestionPayload question = (QuestionPayload) sink.payloads.get(3);
         assertEquals("topic-editor-question", question.targetEditorId());
         assertEquals(4, question.basedOnEditorVersion());
         verify(sessions).appendMessage(7, 99L, AgentMessageRole.USER, "Help me write");
@@ -80,8 +77,7 @@ class AgentRunServiceTest {
                 3,
                 "Try these steps.",
                 List.of(new AgentCitation(42, "Previous guide")),
-                8
-        );
+                8);
         AgentDraft persisted = new AgentDraft();
         persisted.setVersion(5);
         persisted.setEditorVersion(8);
@@ -94,11 +90,11 @@ class AgentRunServiceTest {
                 7,
                 99L,
                 new AgentRunCommand("Improve this", 8, "Old title", 2, "Old body", "topic-editor-8"),
-                sink
-        );
+                sink);
 
         ArgumentCaptor<AgentDraftInput> input = ArgumentCaptor.forClass(AgentDraftInput.class);
-        verify(sessions).saveDraft(org.mockito.ArgumentMatchers.eq(7), org.mockito.ArgumentMatchers.eq(99L), input.capture());
+        verify(sessions).saveDraft(org.mockito.ArgumentMatchers.eq(7), org.mockito.ArgumentMatchers.eq(99L),
+                input.capture());
         assertEquals(8, input.getValue().editorVersion());
         assertEquals("topic-editor-8", input.getValue().targetEditorId());
         assertEquals("Network guide", input.getValue().title());
@@ -107,8 +103,7 @@ class AgentRunServiceTest {
                 AgentSseEventType.RUN_STARTED,
                 AgentSseEventType.CITATION,
                 AgentSseEventType.DRAFT_READY,
-                AgentSseEventType.RUN_COMPLETED
-        ), sink.types());
+                AgentSseEventType.RUN_COMPLETED), sink.types());
         assertEquals(5, ((DraftReadyPayload) sink.payloads.get(2)).draftVersion());
         assertEquals("topic-editor-8", ((DraftReadyPayload) sink.payloads.get(2)).targetEditorId());
     }
@@ -120,8 +115,7 @@ class AgentRunServiceTest {
         AgentRunService service = service(
                 sessions,
                 (request, cancellation, observer) -> new AgentQuestionResult("Question"),
-                executor
-        );
+                executor);
 
         service.start(7, 99L, new AgentRunCommand("First", 1, null, null, null), new RecordingSink());
 
@@ -129,8 +123,7 @@ class AgentRunServiceTest {
                 7,
                 99L,
                 new AgentRunCommand("Second", 1, null, null, null),
-                new RecordingSink()
-        ));
+                new RecordingSink()));
         executor.runNext();
         assertFalse(service.hasActiveRun(99L));
     }
@@ -151,8 +144,7 @@ class AgentRunServiceTest {
                 7,
                 99L,
                 new AgentRunCommand("First", 1, null, null, null),
-                sink
-        );
+                sink);
 
         assertFalse(service.cancel(8, runId));
         assertTrue(service.cancel(7, runId));
@@ -161,8 +153,7 @@ class AgentRunServiceTest {
         assertEquals(List.of(
                 AgentSseEventType.RUN_STARTED,
                 AgentSseEventType.ERROR,
-                AgentSseEventType.RUN_COMPLETED
-        ), sink.types());
+                AgentSseEventType.RUN_COMPLETED), sink.types());
         ErrorPayload error = (ErrorPayload) sink.payloads.get(1);
         assertEquals("CANCELLED", error.code());
         assertTrue(error.retryable());
@@ -200,8 +191,7 @@ class AgentRunServiceTest {
                 session,
                 List.of(),
                 List.of(),
-                null
-        ));
+                null));
         return sessions;
     }
 

@@ -1,12 +1,24 @@
 package com.example.agent.core;
 
+/**
+ * Agent 运行的观察者接口（观察者模式）。
+ *
+ * 作用：让 Agent 循环在「工具开始/完成」时回调外部，
+ * 由调用方（AgentRunService）把状态转成 SSE 事件推给前端（tool_started / tool_completed）。
+ *
+ * 两个方法都有 default 空实现 + 常量 NOOP，
+ * 因此调用方可以只关心自己需要的回调，测试也能传一个什么都不做的观察者。
+ */
 public interface AgentRunObserver {
+    /** 空观察者：不关心任何回调时直接用这个常量。 */
     AgentRunObserver NOOP = new AgentRunObserver() {
     };
 
+    /** 工具调用开始（name 为工具名，arguments 为原始 JSON 参数串）。 */
     default void toolStarted(String name, String arguments) {
     }
 
+    /** 工具调用完成（name 为工具名，result 为工具返回的原始 JSON）。 */
     default void toolCompleted(String name, String result) {
     }
 }

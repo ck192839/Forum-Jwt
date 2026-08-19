@@ -12,7 +12,7 @@ import ColorDot from "@/components/ColorDot.vue";
 import {useStore} from "@/store";
 import {apiForumTopicCreate} from "@/net/api/forum";
 import {deltaToModelText} from "@/agent/deltaText";
-import {nextEditorVersion, stableEditorId} from "@/agent/editorIdentity";
+import {currentEditorVersion, nextEditorVersion, stableEditorId} from "@/agent/editorIdentity";
 import {
     consumeDraftApplication,
     pendingDraftApplication,
@@ -66,6 +66,7 @@ const emit = defineEmits(['close', 'success'])
 
 const refEditor = ref()
 const editorId = stableEditorId(props.editorKey)
+const isEditMode = computed(() => props.editorKey !== 'new-topic')
 let suppressVersionTracking = false
 let editorReady = false
 const editor = reactive({
@@ -83,6 +84,10 @@ const aiPreview = reactive({
 function initEditor() {
     editorReady = false
     suppressVersionTracking = true
+    if(!refEditor.value || typeof refEditor.value.getQuill !== 'function' || !refEditor.value.getQuill()) {
+        nextTick(() => initEditor())
+        return
+    }
     const quillRoot = refEditor.value.getQuill().root
     quillRoot?.setAttribute('role', 'textbox')
     quillRoot?.setAttribute('aria-label', '帖子正文')
@@ -94,7 +99,7 @@ function initEditor() {
     editor.title = props.defaultTitle
     editor.type = findTypeById(props.defaultType)
     nextTick(() => {
-        editor.version = nextEditorVersion(props.editorKey)
+        editor.version = currentEditorVersion(props.editorKey)
         suppressVersionTracking = false
         editorReady = true
         openPendingDraftPreview()
@@ -151,6 +156,7 @@ function requestAiOptimization() {
             bodyMarkdown: bodyMarkdown || null
         }
     })
+    emit('close')
 }
 
 async function openPendingDraftPreview() {
@@ -237,8 +243,12 @@ function cloneDelta(delta) {
 
 watch(pendingDraftApplication, openPendingDraftPreview, {flush: 'post'})
 watch(() => props.show, show => {
-    if(!show) editorReady = false
-})
+    if(show) {
+        initEditor()
+    } else {
+        editorReady = false
+    }
+}, {immediate: true})
 
 Quill.register('modules/imageResize', ImageResize)
 Quill.register('modules/ImageExtend', ImageExtend)
@@ -298,14 +308,13 @@ const editorOption = {
   <el-drawer :model-value="show"
              aria-label="发布帖子编辑器"
              direction="btt"
-             @open="initEditor"
              :close-on-click-modal="false"
              :size="650"
              @close="emit('close')">
     <template #header>
       <div>
-        <div style="font-weight: bold">发表新的帖子</div>
-        <div style="font-size: 13px">发表内容之前，请遵守相关法律法规，不要出现骂人等爆粗口的不文明行为。</div>
+        <div style="font-weight: bold">{{isEditMode ? '编辑帖子' : '发表新的帖子'}}</div>
+        <div style="font-size: 13px">{{isEditMode ? '修改帖子内容，请遵守相关法律法规' : '发表内容之前，请遵守相关法律法规，不要出现骂人等爆粗口的不文明行为。'}}</div>
       </div>
     </template>
     <div style="display: flex;gap: 10px">
