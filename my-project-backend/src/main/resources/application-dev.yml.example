@@ -11,6 +11,12 @@ spring:
     virtual-host: /
     publisher-confirm-type: correlated
     publisher-returns: true
+    listener:
+      simple:
+        retry:
+          enabled: true
+          max-attempts: 3
+          initial-interval: 1000ms
   elasticsearch:
     uris: localhost:9200
     username: elastic
