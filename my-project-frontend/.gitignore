@@ -15,6 +15,7 @@ coverage
 playwright-report
 test-results
 *.local
+env-check.txt
 
 /cypress/videos/
 /cypress/screenshots/

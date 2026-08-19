@@ -11,3 +11,9 @@ log/
 # 配置文件（含敏感信息，使用 .example 版本）
 my-project-backend/src/main/resources/application.yml
 my-project-backend/src/main/resources/application-dev.yml
+
+# 工作文档（feature 分支新建，不提交回原项目）
+docs/
+
+# vitest 缓存（运行测试时在 worktree 根生成）
+node_modules/
