@@ -12,11 +12,11 @@ export const apiUserInfo = (loadingRef) => {
     })
 }
 
-export const apiAuthRegister = (data) => {
+export const apiAuthRegister = (data, failure) => {
     post('/api/auth/register', data, () => {
         ElMessage.success('注册成功，欢迎加入我们')
         router.push("/")
-    })
+    }, failure)
 }
 
 export const apiAuthAskCode = (email, coldTime, type = 'register') => {
