@@ -8,6 +8,7 @@ package com.example.agent.run;
  * - editorVersion ：发起时编辑器版本号（防过期，必填 ≥ 0）
  * - editorTitle / editorTopicTypeId / editorBodyMarkdown：编辑器现有内容（AI 优化场景）
  * - editorId ：编辑器稳定 id（如 topic-editor:new-topic），决定草稿要应用到哪里
+ * - longitude / latitude ：用户位置（浏览器定位，可为 null），用于天气上下文注入
  *
  * promptText()：把「用户消息 + 编辑器现有内容」拼成发给模型的一段完整提示，
  * 并明确标注编辑器内容属于用户提供文本、图片已省略。
@@ -18,7 +19,9 @@ public record AgentRunCommand(
         String editorTitle,
         Integer editorTopicTypeId,
         String editorBodyMarkdown,
-        String editorId) {
+        String editorId,
+        Double longitude,
+        Double latitude) {
     /** 便捷构造器：不携带编辑器上下文时 editorId 默认 null。 */
     public AgentRunCommand(
             String message,
@@ -29,7 +32,18 @@ public record AgentRunCommand(
         this(message, editorVersion, editorTitle, editorTopicTypeId, editorBodyMarkdown, null);
     }
 
-    /** 防御性校验：版本非负；消息和编辑器草稿至少有一个；editorId 长度受限。 */
+    /** 便捷构造器：不携带用户位置时经纬度默认 null（后端回退默认位置）。 */
+    public AgentRunCommand(
+            String message,
+            int editorVersion,
+            String editorTitle,
+            Integer editorTopicTypeId,
+            String editorBodyMarkdown,
+            String editorId) {
+        this(message, editorVersion, editorTitle, editorTopicTypeId, editorBodyMarkdown, editorId, null, null);
+    }
+
+    /** 防御性校验：版本非负；消息和编辑器草稿至少有一个；editorId 长度受限；经纬度范围合法。 */
     public AgentRunCommand {
         if (editorVersion < 0) {
             throw new IllegalArgumentException("editorVersion must be non-negative");
@@ -43,6 +57,12 @@ public record AgentRunCommand(
         }
         if (editorId != null && editorId.length() > 128) {
             throw new IllegalArgumentException("editorId is too long");
+        }
+        if ((longitude == null) != (latitude == null)) {
+            throw new IllegalArgumentException("longitude and latitude must be provided together");
+        }
+        if (longitude != null && (longitude < -180 || longitude > 180 || latitude < -90 || latitude > 90)) {
+            throw new IllegalArgumentException("Coordinates are out of range");
         }
     }
 

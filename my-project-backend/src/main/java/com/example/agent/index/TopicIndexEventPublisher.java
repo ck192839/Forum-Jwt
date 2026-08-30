@@ -24,8 +24,10 @@ import java.util.concurrent.TimeoutException;
  * 在事务 afterCommit 后再真正发送（事务回滚则不发送）。
  * - 没有事务时直接发送。
  *
- * 可靠投递：使用 publisher confirms，5 秒内等 RabbitMQ ack，
- * 失败（nack / 消息被退回 / 超时）抛 AmqpException，由业务层决定是否重试。
+ * 可靠投递：使用 publisher confirms（需配置 publisher-confirm-type: correlated），
+ * 5 秒内等 RabbitMQ ack。失败（nack / 消息被退回 / 超时）只记录日志、不向业务抛出：
+ * 此刻业务数据已落库（afterCommit 阶段事务早已提交），抛异常只会把成功的请求打成失败；
+ * 丢失的索引事件可通过 {@link TopicIndexRebuildService} 全量重建兜底。
  */
 @Slf4j
 @Component
@@ -83,32 +85,22 @@ public class TopicIndexEventPublisher {
         send(event);
     }
 
-    /** 批量发送（事务提交后），累积首个失败并抛出。 */
+    /**
+     * 批量发送（事务提交后）：逐个发送，单个失败只记录日志，不影响其余事件。
+     */
     private void sendAll(List<TopicIndexEvent> events) {
-        AmqpException firstFailure = null;
         for (TopicIndexEvent event : events) {
-            try {
-                send(event);
-            } catch (AmqpException exception) {
-                if (firstFailure == null) {
-                    firstFailure = exception;
-                } else {
-                    firstFailure.addSuppressed(exception);
-                }
-            }
-        }
-        if (firstFailure != null) {
-            throw firstFailure;
+            send(event);
         }
     }
 
-    /** 发送单个事件（失败记录日志后重新抛出）。 */
+    /** 发送单个事件（任何失败只记录日志，绝不打断业务请求——索引可全量重建兜底）。 */
     private void send(TopicIndexEvent event) {
         try {
             sendConfirmed(event);
         } catch (AmqpException exception) {
-            log.error("Unable to enqueue topic index event for topic {}", event.topicId(), exception);
-            throw exception;
+            log.error("Unable to enqueue topic index event for topic {} — index may be stale,"
+                    + " rebuild it via TopicIndexRebuildService if needed", event.topicId(), exception);
         }
     }
 

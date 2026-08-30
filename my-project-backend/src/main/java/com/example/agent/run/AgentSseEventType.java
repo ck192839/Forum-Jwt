@@ -10,6 +10,7 @@ package com.example.agent.run;
  * - tool_completed ：工具执行完成
  * - citation ：一条引用帖子
  * - question ：Agent 向用户追问
+ * - answer ：Agent 对论坛问答的正式回答（引用先经 citation 事件推送）
  * - draft_ready ：草稿就绪（前端展示并可应用）
  * - run_completed ：运行结束（status = COMPLETED / CANCELLED / FAILED）
  * - error ：运行出错（code + 安全 message）
@@ -24,6 +25,7 @@ public enum AgentSseEventType {
     TOOL_COMPLETED("tool_completed"),
     CITATION("citation"),
     QUESTION("question"),
+    ANSWER("answer"),
     DRAFT_READY("draft_ready"),
     RUN_COMPLETED("run_completed"),
     ERROR("error");

@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class TopicIndexRebuildServiceTest {
@@ -20,11 +21,13 @@ class TopicIndexRebuildServiceTest {
     void reportsProcessedAndFailedTopics() {
         TopicMapper mapper = mock(TopicMapper.class);
         TopicVectorIndexer indexer = mock(TopicVectorIndexer.class);
+        TopicKeywordIndexer keywordIndexer = mock(TopicKeywordIndexer.class);
         Topic first = topic(1);
         Topic second = topic(2);
         when(mapper.selectList(any())).thenReturn(List.of(first, second));
         doThrow(new IllegalStateException("embedding failed")).when(indexer).index(second);
-        TopicIndexRebuildService service = new TopicIndexRebuildService(mapper, indexer, Runnable::run);
+        TopicIndexRebuildService service = new TopicIndexRebuildService(
+                mapper, indexer, keywordIndexer, Runnable::run);
 
         assertTrue(service.start());
 
@@ -36,11 +39,34 @@ class TopicIndexRebuildServiceTest {
     }
 
     @Test
+    void rebuildsBothIndexesFromTheSameTopicList() {
+        TopicMapper mapper = mock(TopicMapper.class);
+        TopicVectorIndexer indexer = mock(TopicVectorIndexer.class);
+        TopicKeywordIndexer keywordIndexer = mock(TopicKeywordIndexer.class);
+        Topic first = topic(1);
+        Topic second = topic(2);
+        when(mapper.selectList(any())).thenReturn(List.of(first, second));
+        TopicIndexRebuildService service = new TopicIndexRebuildService(
+                mapper, indexer, keywordIndexer, Runnable::run);
+
+        assertTrue(service.start());
+
+        verify(indexer).clear();
+        verify(keywordIndexer).clear();
+        verify(indexer).index(first);
+        verify(indexer).index(second);
+        verify(keywordIndexer).index(first);
+        verify(keywordIndexer).index(second);
+    }
+
+    @Test
     void clearsRunningStateWhenLoadingTopicsFails() {
         TopicMapper mapper = mock(TopicMapper.class);
         TopicVectorIndexer indexer = mock(TopicVectorIndexer.class);
+        TopicKeywordIndexer keywordIndexer = mock(TopicKeywordIndexer.class);
         when(mapper.selectList(any())).thenThrow(new IllegalStateException("database unavailable"));
-        TopicIndexRebuildService service = new TopicIndexRebuildService(mapper, indexer, Runnable::run);
+        TopicIndexRebuildService service = new TopicIndexRebuildService(
+                mapper, indexer, keywordIndexer, Runnable::run);
 
         assertTrue(service.start());
 

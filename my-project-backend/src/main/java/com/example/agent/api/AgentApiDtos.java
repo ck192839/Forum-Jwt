@@ -6,6 +6,7 @@ import com.example.agent.session.AgentSessionStatus;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.AssertTrue;
+import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
@@ -139,13 +140,16 @@ public final class AgentApiDtos {
      * - editorId ：编辑器稳定 id（如 topic-editor:new-topic），可为 null（纯聊天）
      * - editorVersion ：当前编辑器版本号（防过期草稿，必填且 ≥ 0）
      * - editorDraft ：编辑器现有内容（AI 优化场景），可为 null
+     * - longitude / latitude ：用户位置（浏览器定位，可为 null），仅用于天气建议上下文
      * isContentPresent()：@AssertTrue 类级校验——message 和 editorDraft 至少得有一样，否则 400。
      */
     public record RunRequest(
             @Size(max = 8_000) String message,
             @Size(max = 128) String editorId,
             @NotNull @Min(0) Integer editorVersion,
-            @Valid EditorDraft editorDraft) {
+            @Valid EditorDraft editorDraft,
+            @Min(-180) @Max(180) Double longitude,
+            @Min(-90) @Max(90) Double latitude) {
         @AssertTrue(message = "A message or editor draft is required")
         @JsonIgnore
         public boolean isContentPresent() {

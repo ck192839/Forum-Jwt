@@ -10,6 +10,7 @@ import java.util.List;
  * - userMessage ：用户本次输入的自然语言（必填，非空）
  * - editorVersion ：发起时编辑器的版本号（用于草稿防过期校验，必填 ≥ 0）
  * - history ：会话历史消息（Spring AI 的 Message 列表），可为 null 表示无历史
+ * - context ：环境上下文（当前时间/天气摘要），可为 null 表示无
  *
  * 构造器里做防御性校验：参数不合法直接拒绝（fail-fast），
  * 历史列表用 List.copyOf 拷贝，防止外部修改。
@@ -17,7 +18,13 @@ import java.util.List;
 public record AgentRunRequest(
         String userMessage,
         int editorVersion,
-        List<Message> history) {
+        List<Message> history,
+        AgentRunContext context) {
+    /** 兼容构造器：不携带环境上下文（时间/天气注入是可选能力）。 */
+    public AgentRunRequest(String userMessage, int editorVersion, List<Message> history) {
+        this(userMessage, editorVersion, history, null);
+    }
+
     public AgentRunRequest {
         // 用户输入不能为空
         if (userMessage == null || userMessage.isBlank()) {

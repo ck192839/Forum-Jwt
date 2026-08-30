@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from 'vitest'
 import { createAgentAssistantController } from './useAgentAssistant'
+import { clearLocationCacheForTests } from './location'
 
 function detail(id) {
   return {
@@ -161,5 +162,34 @@ describe('Agent assistant controller', () => {
     await Promise.all([first, second])
 
     expect(api.startAgentRun).toHaveBeenCalledTimes(1)
+  })
+
+  test('attaches the cached user location to the run request', async () => {
+    const geolocation = {
+      getCurrentPosition: success => success({ coords: { longitude: 120.1, latitude: 30.2 } })
+    }
+    Object.defineProperty(globalThis.navigator, 'geolocation', { value: geolocation, configurable: true })
+    const api = {
+      listRecentAgentSessions: vi.fn().mockResolvedValue([{ id: 5, status: 'ACTIVE' }]),
+      getAgentSession: vi.fn().mockResolvedValue(detail(5)),
+      startAgentRun: vi.fn().mockResolvedValue(undefined)
+    }
+    const controller = createAgentAssistantController(api)
+    await controller.initialize()
+    controller.prompt.value = '哪里有好吃的牛腩？'
+
+    try {
+      await controller.submit()
+
+      expect(api.startAgentRun).toHaveBeenCalledWith(
+        5,
+        expect.objectContaining({ message: '哪里有好吃的牛腩？', longitude: 120.1, latitude: 30.2 }),
+        expect.any(Function),
+        expect.any(AbortSignal)
+      )
+    } finally {
+      delete globalThis.navigator.geolocation
+      clearLocationCacheForTests()
+    }
   })
 })

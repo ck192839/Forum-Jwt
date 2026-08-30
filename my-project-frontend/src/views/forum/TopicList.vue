@@ -22,6 +22,7 @@ import router from "@/router";
 import TopicTag from "@/components/TopicTag.vue";
 import TopicCollectList from "@/components/TopicCollectList.vue";
 import {apiForumTopicList, apiForumTopTopics, apiForumWeather} from "@/net/api/forum";
+import {DEFAULT_LOCATION, requestUserLocation} from "@/agent/location";
 import {editorOpenRequest} from "@/agent/editorBridge";
 
 const store = useStore()
@@ -79,14 +80,7 @@ function resetList() {
     updateList()
 }
 
-navigator.geolocation.getCurrentPosition(position => {
-    const longitude = position.coords.longitude
-    const latitude = position.coords.latitude
-    apiForumWeather(longitude, latitude, data => {
-        Object.assign(weather, data)
-        weather.success = true
-    })
-}, error => {
+requestUserLocation(error => {
     console.info('位置信息获取失败:', error)
     let errorMessage = '位置信息获取失败'
     if (error.code === 1) {
@@ -97,13 +91,12 @@ navigator.geolocation.getCurrentPosition(position => {
         errorMessage = '位置信息获取超时'
     }
     ElMessage.warning(errorMessage + '，将使用默认位置')
-    apiForumWeather(116.40529, 39.90499, data => {
+}).then(location => {
+    const { longitude, latitude } = location || DEFAULT_LOCATION
+    apiForumWeather(longitude, latitude, data => {
         Object.assign(weather, data)
         weather.success = true
     })
-}, {
-    timeout: 10000,
-    enableHighAccuracy: false
 })
 
 onMounted(() => {

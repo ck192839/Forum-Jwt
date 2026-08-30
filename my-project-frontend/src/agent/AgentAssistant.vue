@@ -11,6 +11,7 @@ import {
   VideoPause
 } from '@element-plus/icons-vue'
 import { createAgentAssistantController } from './useAgentAssistant'
+import { sanitizeMarkdown } from './draftApply'
 import router from '@/router'
 import {
   editorOptimizationRequest,
@@ -52,6 +53,22 @@ function isTerminalJson(content) {
       && (parsed.type === 'DRAFT' || parsed.type === 'QUESTION' || 'bodyMarkdown' in parsed)
   } catch {
     return false
+  }
+}
+
+// 助手消息按 markdown 渲染（sanitizeMarkdown 内部经 DOMPurify 消毒）
+function assistantHtml(content) {
+  return sanitizeMarkdown(content)
+}
+
+// markdown 里的站内链接用 router 跳转，避免整页刷新
+function onMessageClick(event) {
+  const link = event.target.closest('a')
+  if (!link) return
+  const href = link.getAttribute('href') || ''
+  if (href.startsWith('/')) {
+    event.preventDefault()
+    router.push(href)
   }
 }
 
@@ -178,12 +195,29 @@ async function resetAndNewSession() {
           <div v-if="loading" class="center-state"><Loading class="spin"/>加载中</div>
           <template v-else>
             <div v-if="!state.messages.length && !state.streamingText" class="empty-state">
-              描述你准备发布的内容
+              问我论坛内容相关的问题，或描述你准备发布的内容
             </div>
 
             <div v-for="(message, index) in visibleMessages" :key="message.id || index"
                  :class="['message', message.role.toLowerCase()]">
-              {{ message.content }}
+              <template v-if="message.role === 'USER'">{{ message.content }}</template>
+              <template v-else>
+                <div v-if="message.timeline && message.timeline.length" class="message-tools">
+                  <div v-for="(tool, toolIndex) in message.timeline" :key="toolIndex" class="tool-row">
+                    <Check class="tool-complete"/>
+                    <span>{{ toolLabels[tool.toolName] || tool.toolName }}</span>
+                  </div>
+                </div>
+                <!-- eslint-disable-next-line vue/no-v-html — 内容已经 sanitizeMarkdown 消毒 -->
+                <div class="message-body" v-html="assistantHtml(message.content)" @click="onMessageClick"></div>
+                <nav v-if="message.citations && message.citations.length" class="citation-list message-citations"
+                     aria-label="本轮引用帖子">
+                  <RouterLink v-for="citation in message.citations" :key="citation.topicId"
+                              :to="`/index/topic-detail/${citation.topicId}`">
+                    <span>#{{ citation.topicId }}</span>{{ citation.title }}
+                  </RouterLink>
+                </nav>
+              </template>
             </div>
 
             <div v-if="state.streamingText" class="message assistant streaming">
@@ -205,9 +239,7 @@ async function resetAndNewSession() {
                           :to="`/index/topic-detail/${citation.topicId}`">
                 <span>#{{ citation.topicId }}</span>{{ citation.title }}
               </RouterLink>
-            </nav>
-
-            <section v-if="state.draft" class="draft-result">
+            </nav>            <section v-if="state.draft" class="draft-result">
               <div class="draft-heading">
                 <div>
                   <span>草稿 v{{ state.draft.version }}</span>
@@ -369,7 +401,6 @@ async function resetAndNewSession() {
   margin-bottom: 10px;
   padding: 9px 11px;
   border-radius: 7px;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-size: 14px;
 }
@@ -378,11 +409,33 @@ async function resetAndNewSession() {
   margin-left: auto;
   color: white;
   background: #2563eb;
+  white-space: pre-wrap;
 }
 
 .message.assistant {
   background: var(--el-fill-color-light);
   border: 1px solid var(--el-border-color-lighter);
+}
+
+.message-body :deep(a) {
+  color: #2563eb;
+}
+
+.message-tools {
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+
+.message-tools .tool-row {
+  min-height: 24px;
+  font-size: 12px;
+}
+
+.message-citations {
+  margin: 8px 0 0;
+  padding-top: 6px;
+  border-top: 1px solid var(--el-border-color-lighter);
 }
 
 .message.question { border-left: 3px solid #d97706; }

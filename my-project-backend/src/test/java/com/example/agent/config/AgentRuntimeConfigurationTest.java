@@ -80,7 +80,9 @@ class AgentRuntimeConfigurationTest {
                     mock(AgentSessionService.class),
                     agent,
                     runExecutor,
-                    objectMapper
+                    objectMapper,
+                    mock(com.example.service.WeatherService.class),
+                    java.time.Clock.systemUTC()
             );
 
             assertNotNull(agent);

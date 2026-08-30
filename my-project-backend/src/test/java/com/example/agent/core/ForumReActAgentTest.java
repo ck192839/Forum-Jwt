@@ -111,6 +111,47 @@ class ForumReActAgentTest {
         }
 
         @Test
+        void treatsAToolEncodedAnswerAsATerminalResult() {
+                ChatModel model = prompt -> toolCall(
+                                "call-answer",
+                                "answer",
+                                "{\"answer\":\"论坛里暂时没有相关的探店分享。\",\"citations\":[]}");
+                RecordingObserver observer = new RecordingObserver();
+                ForumReActAgent agent = agent(model, emptyTools(), 8, Duration.ofSeconds(2));
+
+                AgentAnswerResult result = assertInstanceOf(AgentAnswerResult.class, agent.run(
+                                new AgentRunRequest("哪里有好吃的牛腩？", 3, List.of()),
+                                new AgentCancellationToken(),
+                                observer));
+
+                assertEquals("论坛里暂时没有相关的探店分享。", result.answer());
+                assertEquals(List.of(), result.citations());
+                assertEquals(List.of(), observer.started);
+        }
+
+        @Test
+        void rejectsAToolEncodedAnswerMixedWithRealToolCalls() {
+                Deque<ChatResponse> responses = new ArrayDeque<>();
+                responses.add(new ChatResponse(List.of(new Generation(AssistantMessage.builder()
+                                .content("")
+                                .toolCalls(List.of(
+                                                new AssistantMessage.ToolCall("call-1", "function",
+                                                                "search_similar_topics", "{\"query\":\"牛腩\"}"),
+                                                new AssistantMessage.ToolCall("call-2", "function",
+                                                                "ANSWER", "{\"answer\":\"编造\",\"citations\":[]}")))
+                                .build()))));
+                ForumReActAgent agent = agent(prompt -> responses.removeFirst(), emptyTools(), 8,
+                                Duration.ofSeconds(2));
+
+                AgentRunException exception = assertThrows(AgentRunException.class, () -> agent.run(
+                                new AgentRunRequest("哪里有好吃的牛腩？", 3, List.of()),
+                                new AgentCancellationToken(),
+                                AgentRunObserver.NOOP));
+
+                assertEquals(AgentRunFailure.INVALID_RESPONSE, exception.failure());
+        }
+
+        @Test
         void repairsAnInvalidTerminalFormatWithinTheRunBudget() {
                 Deque<ChatResponse> responses = new ArrayDeque<>();
                 responses.add(response("""
@@ -445,7 +486,7 @@ class ForumReActAgentTest {
                                 .getText();
                 assertTrue(system.contains("untrusted"));
                 assertTrue(system.contains("never publish"));
-                assertTrue(system.contains("Do not reveal chain-of-thought"));
+                assertTrue(system.contains("Never reveal chain-of-thought"));
         }
 
         @Test

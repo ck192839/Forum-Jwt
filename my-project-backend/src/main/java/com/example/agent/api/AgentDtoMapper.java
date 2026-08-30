@@ -2,6 +2,7 @@ package com.example.agent.api;
 
 import com.example.agent.core.AgentCitation;
 import com.example.agent.run.AgentSseEventType;
+import com.example.agent.run.AnswerPayload;
 import com.example.agent.run.CitationPayload;
 import com.example.agent.run.DraftReadyPayload;
 import com.example.agent.run.ErrorPayload;
@@ -118,6 +119,7 @@ final class AgentDtoMapper {
             case TOOL_STARTED, TOOL_COMPLETED -> ToolEventPayload.class;
             case CITATION -> CitationPayload.class;
             case QUESTION -> QuestionPayload.class;
+            case ANSWER -> AnswerPayload.class;
             case DRAFT_READY -> DraftReadyPayload.class;
             case RUN_COMPLETED -> RunCompletedPayload.class;
             case ERROR -> ErrorPayload.class;

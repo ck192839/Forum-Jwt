@@ -1,8 +1,10 @@
 package com.example.agent.run;
 
 import com.example.agent.core.AgentCancellationToken;
+import com.example.agent.core.AgentAnswerResult;
 import com.example.agent.core.AgentDraftResult;
 import com.example.agent.core.AgentQuestionResult;
+import com.example.agent.core.AgentRunContext;
 import com.example.agent.core.AgentRunException;
 import com.example.agent.core.AgentRunFailure;
 import com.example.agent.core.AgentRunObserver;
@@ -15,14 +17,23 @@ import com.example.agent.session.AgentMessage;
 import com.example.agent.session.AgentMessageRole;
 import com.example.agent.session.AgentSessionAggregate;
 import com.example.agent.session.AgentSessionService;
+import com.example.entity.vo.response.WeatherVO;
+import com.example.service.WeatherService;
+import com.alibaba.fastjson2.JSONArray;
+import com.alibaba.fastjson2.JSONObject;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
 
+import java.time.Clock;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
@@ -45,11 +56,23 @@ import java.util.UUID;
  * 5 参构造器的 runIdSupplier 是给测试注入确定性 runId 用的。
  */
 public class AgentRunService {
+    // 前端天气模块的默认坐标兜底（TopicList.vue 定位失败时用的同一组值）
+    private static final double DEFAULT_LONGITUDE = 116.40529;
+    private static final double DEFAULT_LATITUDE = 39.90499;
+    // 当前时间文本格式：含星期几，供模型推断饭点（如 "2026-08-30 10:15 星期六"）
+    private static final DateTimeFormatter TIME_TEXT_FORMAT =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm EEEE", Locale.CHINA);
+    // 和风天气逐小时预报的 fxTime（如 "2026-08-30T11:00+08:00"）中 HH:mm 的位置
+    private static final int FX_TIME_HOUR_START = 11;
+    private static final int FX_TIME_HOUR_END = 16;
+
     private final AgentSessionService sessionService; // 会话读写
     private final AgentRunner agentRunner; // 核心 Agent（ForumReActAgent）
     private final Executor runExecutor; // run 异步执行线程池
     private final ObjectMapper objectMapper; // 事件 payload 序列化
     private final Supplier<String> runIdSupplier; // runId 生成器（默认 UUID）
+    private final WeatherService weatherService; // 天气服务（可为 null，表示禁用天气上下文）
+    private final Clock clock; // 时钟（可注入测试时钟）
     // 会话 id → 当前 runId（保证互斥）
     private final Map<Long, String> sessionRuns = new ConcurrentHashMap<>();
     // runId → 活跃 run（用于取消/查找）
@@ -64,18 +87,32 @@ public class AgentRunService {
         this(sessionService, agentRunner, runExecutor, objectMapper, () -> UUID.randomUUID().toString());
     }
 
-    /** 测试构造器：可注入固定 runId（如 "run-1"），方便断言。 */
+    /** 测试构造器：可注入固定 runId（如 "run-1"），方便断言。天气上下文禁用。 */
     public AgentRunService(
             AgentSessionService sessionService,
             AgentRunner agentRunner,
             Executor runExecutor,
             ObjectMapper objectMapper,
             Supplier<String> runIdSupplier) {
+        this(sessionService, agentRunner, runExecutor, objectMapper, runIdSupplier, null, null);
+    }
+
+    /** 完整构造器：注入天气服务与时钟（AgentRuntimeConfiguration 使用）。 */
+    public AgentRunService(
+            AgentSessionService sessionService,
+            AgentRunner agentRunner,
+            Executor runExecutor,
+            ObjectMapper objectMapper,
+            Supplier<String> runIdSupplier,
+            WeatherService weatherService,
+            Clock clock) {
         this.sessionService = sessionService;
         this.agentRunner = agentRunner;
         this.runExecutor = runExecutor;
         this.objectMapper = objectMapper;
         this.runIdSupplier = runIdSupplier;
+        this.weatherService = weatherService;
+        this.clock = clock == null ? Clock.systemUTC() : clock;
     }
 
     /**
@@ -145,12 +182,14 @@ public class AgentRunService {
         try {
             AgentRunObserver observer = observer(run);
             AgentTerminalResult result = agentRunner.run(
-                    new AgentRunRequest(promptText, command.editorVersion(), history),
+                    new AgentRunRequest(promptText, command.editorVersion(), history, buildContext(command)),
                     run.cancellation(),
                     observer);
-            // 结果分流：追问 or 草稿
+            // 结果分流：追问 / 问答回答 / 草稿
             if (result instanceof AgentQuestionResult question) {
                 handleQuestion(run, command, question);
+            } else if (result instanceof AgentAnswerResult answer) {
+                handleAnswer(run, answer);
             } else if (result instanceof AgentDraftResult draft) {
                 handleDraft(run, command, draft);
             } else {
@@ -182,6 +221,81 @@ public class AgentRunService {
                 question.question(),
                 command.editorId(),
                 command.editorVersion()));
+    }
+
+    /**
+     * 处理问答回答结果：
+     * 1. 存助手消息（回答正文）
+     * 2. 逐条推 citation 事件（与草稿引用同机制，前端去重渲染可跳转出处）
+     * 3. 推 answer 事件（携带回答正文）
+     */
+    private void handleAnswer(ActiveRun run, AgentAnswerResult answer) {
+        sessionService.appendMessage(
+                run.uid(),
+                run.sessionId(),
+                AgentMessageRole.ASSISTANT,
+                answer.answer());
+        answer.citations().forEach(citation -> emit(
+                run,
+                AgentSseEventType.CITATION,
+                new CitationPayload(citation.topicId(), citation.title())));
+        emit(run, AgentSseEventType.ANSWER, new AnswerPayload(answer.answer()));
+    }
+
+    /**
+     * 组装运行环境上下文：当前时间（含星期）+ 位置天气摘要。
+     * 天气获取失败（网络/未配置/坐标非法）时静默降级为 null，不阻塞运行。
+     */
+    private AgentRunContext buildContext(AgentRunCommand command) {
+        String timeText = TIME_TEXT_FORMAT.format(LocalDateTime.now(clock.withZone(ZoneId.systemDefault())));
+        return new AgentRunContext(timeText, fetchWeatherText(command));
+    }
+
+    /** 获取天气摘要文本；未注入天气服务、查询失败或返回空时返回 null。 */
+    private String fetchWeatherText(AgentRunCommand command) {
+        if (weatherService == null) {
+            return null;
+        }
+        double longitude = command.longitude() == null ? DEFAULT_LONGITUDE : command.longitude();
+        double latitude = command.latitude() == null ? DEFAULT_LATITUDE : command.latitude();
+        try {
+            WeatherVO weather = weatherService.fetchWeather(longitude, latitude);
+            return weather == null ? null : summarizeWeather(weather);
+        } catch (RuntimeException ignored) {
+            return null; // 天气是可选增强，任何失败都不应影响问答
+        }
+    }
+
+    /** 把 WeatherVO 摘要成一行英文文本（位置 + 当前天气 + 未来几小时预报）。 */
+    private String summarizeWeather(WeatherVO weather) {
+        StringBuilder text = new StringBuilder();
+        if (weather.getLocation() != null && weather.getLocation().getString("name") != null) {
+            text.append("User location: ").append(weather.getLocation().getString("name")).append(". ");
+        }
+        JSONObject now = weather.getNow();
+        if (now != null) {
+            text.append("Current weather: ")
+                    .append(now.getString("temp")).append("°C, ")
+                    .append(now.getString("text")).append(". ");
+        }
+        JSONArray hourly = weather.getHourly();
+        if (hourly != null && !hourly.isEmpty()) {
+            text.append("Hourly forecast: ");
+            for (int i = 0; i < hourly.size(); i++) {
+                JSONObject hour = hourly.getJSONObject(i);
+                text.append(hourlyText(hour)).append("; ");
+            }
+        }
+        return text.toString().trim();
+    }
+
+    /** 单个小时预报的文本（"11:00 25°C 小雨"），fxTime 解析失败时跳过该小时。 */
+    private String hourlyText(JSONObject hour) {
+        String fxTime = hour.getString("fxTime");
+        String time = fxTime != null && fxTime.length() >= FX_TIME_HOUR_END
+                ? fxTime.substring(FX_TIME_HOUR_START, FX_TIME_HOUR_END)
+                : "";
+        return (time + " " + hour.getString("temp") + "°C " + hour.getString("text")).trim();
     }
 
     /**

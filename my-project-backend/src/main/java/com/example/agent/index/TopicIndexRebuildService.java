@@ -11,9 +11,9 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * 索引全量重建服务：遍历所有公开帖子，重新生成向量索引。
+ * 索引全量重建服务：遍历所有公开帖子，同时重建向量索引与关键词索引。
  *
- * 用途：向量索引损坏/版本升级后，后台管理入口（AgentIndexAdminController）触发全量重建。
+ * 用途：索引损坏/版本升级/存量追平后，后台管理入口（AgentIndexAdminController）触发全量重建。
  *
  * 并发安全：AtomicBoolean running 保证同一时刻只有一个重建任务；
  * status 是 volatile 记录，供外部随时查询进度（后台管理页面展示）。
@@ -23,13 +23,19 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class TopicIndexRebuildService {
     private final TopicMapper topicMapper; // 帖子查询
     private final TopicVectorIndexer indexer; // 向量索引写入
+    private final TopicKeywordIndexer keywordIndexer; // 关键词索引写入
     private final Executor executor; // 重建执行器（单线程，串行执行）
     private final AtomicBoolean running = new AtomicBoolean(false); // 是否正在重建
     private volatile TopicIndexRebuildStatus status = TopicIndexRebuildStatus.idle(); // 进度状态
 
-    public TopicIndexRebuildService(TopicMapper topicMapper, TopicVectorIndexer indexer, Executor executor) {
+    public TopicIndexRebuildService(
+            TopicMapper topicMapper,
+            TopicVectorIndexer indexer,
+            TopicKeywordIndexer keywordIndexer,
+            Executor executor) {
         this.topicMapper = topicMapper;
         this.indexer = indexer;
+        this.keywordIndexer = keywordIndexer;
         this.executor = executor;
     }
 
@@ -71,9 +77,11 @@ public class TopicIndexRebuildService {
             status = new TopicIndexRebuildStatus(true, topics.size(), 0, 0, startedAt, null);
             // 先清空旧索引，再全量写入
             indexer.clear();
+            keywordIndexer.clear();
             for (Topic topic : topics) {
                 try {
                     indexer.index(topic);
+                    keywordIndexer.index(topic);
                     processed++;
                 } catch (RuntimeException exception) {
                     // 单帖失败不中断整体重建

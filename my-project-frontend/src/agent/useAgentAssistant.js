@@ -1,6 +1,7 @@
 import { reactive, ref } from 'vue'
 import * as defaultApi from './api'
 import { applyAgentEvent, createAgentState, restoreAgentSession } from './agentState'
+import { requestUserLocation } from './location'
 
 export function createAgentAssistantController(api = defaultApi) {
   const state = reactive(createAgentState())
@@ -16,6 +17,8 @@ export function createAgentAssistantController(api = defaultApi) {
     initialized = true
     loading.value = true
     try {
+      // 提前触发定位（异步缓存），用户提交问答时位置通常已就绪
+      requestUserLocation()
       await refreshSessions()
       const active = sessions.value.find(session => session.status === 'ACTIVE')
       if (active) await selectSession(active.id)
@@ -77,6 +80,12 @@ export function createAgentAssistantController(api = defaultApi) {
       }
       if (effectiveEditorContext.editorId) request.editorId = effectiveEditorContext.editorId
       if (effectiveEditorContext.editorDraft) request.editorDraft = effectiveEditorContext.editorDraft
+      // 附带用户位置（用于天气建议）；未授权/失败时省略，后端回退默认坐标
+      const location = await requestUserLocation()
+      if (location) {
+        request.longitude = location.longitude
+        request.latitude = location.latitude
+      }
 
       await api.startAgentRun(
         state.sessionId,

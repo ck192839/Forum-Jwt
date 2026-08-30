@@ -9,6 +9,7 @@ import com.example.agent.tool.ForumAuthoringTools;
 import com.example.agent.tool.ForumToolCallbacks;
 import com.example.mapper.TopicMapper;
 import com.example.mapper.TopicTypeMapper;
+import com.example.service.WeatherService;
 import com.example.utils.ProhibitedUtils;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.ai.chat.model.ChatModel;
@@ -20,7 +21,9 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.concurrent.CustomizableThreadFactory;
 
+import java.time.Clock;
 import java.util.Arrays;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -135,14 +138,19 @@ public class AgentRuntimeConfiguration {
 
     /**
      * 运行编排服务：会话加载 → 消息落库 → 异步执行 Agent → 事件落库 + SSE 推送。
-     * 注意：这里用 4 参构造器（runId 用默认 UUID），测试里用 5 参构造器注入固定 runId。
+     * 注入 WeatherService（时间/天气上下文）与 Clock（可注入测试时钟）。
+     * 测试里可用短构造器禁用天气上下文。
      */
     @Bean
     AgentRunService agentRunService(
             AgentSessionService sessionService,
             ForumReActAgent agent,
             @Qualifier("agentRunExecutor") ExecutorService runExecutor,
-            ObjectMapper objectMapper) {
-        return new AgentRunService(sessionService, agent, runExecutor, objectMapper);
+            ObjectMapper objectMapper,
+            WeatherService weatherService,
+            Clock clock) {
+        return new AgentRunService(
+                sessionService, agent, runExecutor, objectMapper,
+                () -> UUID.randomUUID().toString(), weatherService, clock);
     }
 }

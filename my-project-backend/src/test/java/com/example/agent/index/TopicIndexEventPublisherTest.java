@@ -10,7 +10,7 @@ import org.springframework.transaction.support.AbstractPlatformTransactionManage
 import org.springframework.transaction.support.DefaultTransactionStatus;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.ArgumentMatchers.any;
@@ -66,7 +66,7 @@ class TopicIndexEventPublisherTest {
     }
 
     @Test
-    void exposesRabbitFailuresInsteadOfReportingFalseSuccess() {
+    void logsButDoesNotFailTheRequestWhenRabbitIsUnavailable() {
         RabbitTemplate rabbitTemplate = confirmedRabbitTemplate();
         TopicIndexEvent event = new TopicIndexEvent(10, TopicIndexAction.UPSERT);
         AmqpConnectException failure = new AmqpConnectException(new IllegalStateException("offline"));
@@ -75,11 +75,12 @@ class TopicIndexEventPublisherTest {
         );
         TopicIndexEventPublisher publisher = new TopicIndexEventPublisher(rabbitTemplate);
 
-        assertThrows(AmqpConnectException.class, () -> publisher.upsert(10));
+        // 业务请求不能因为索引事件失败而报错（数据已落库，索引可重建兜底）
+        assertDoesNotThrow(() -> publisher.upsert(10));
     }
 
     @Test
-    void exposesRabbitFailuresRaisedByTheAfterCommitCallback() {
+    void logsButDoesNotFailTheRequestWhenAfterCommitSendFails() {
         RabbitTemplate rabbitTemplate = confirmedRabbitTemplate();
         TopicIndexEvent event = new TopicIndexEvent(11, TopicIndexAction.DELETE);
         AmqpConnectException failure = new AmqpConnectException(new IllegalStateException("offline"));
@@ -88,8 +89,7 @@ class TopicIndexEventPublisherTest {
         );
         TopicIndexEventPublisher publisher = new TopicIndexEventPublisher(rabbitTemplate);
 
-        assertThrows(AmqpConnectException.class, () -> transactionTemplate()
-                .executeWithoutResult(status -> publisher.delete(11)));
+        assertDoesNotThrow(() -> transactionTemplate().executeWithoutResult(status -> publisher.delete(11)));
     }
 
     @Test
@@ -103,7 +103,7 @@ class TopicIndexEventPublisherTest {
         );
         TopicIndexEventPublisher publisher = new TopicIndexEventPublisher(rabbitTemplate);
 
-        assertThrows(AmqpConnectException.class, () -> transactionTemplate().executeWithoutResult(status -> {
+        assertDoesNotThrow(() -> transactionTemplate().executeWithoutResult(status -> {
             publisher.delete(12);
             publisher.delete(13);
         }));

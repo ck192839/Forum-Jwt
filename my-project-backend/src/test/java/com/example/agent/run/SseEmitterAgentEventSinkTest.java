@@ -35,7 +35,7 @@ class SseEmitterAgentEventSinkTest {
 
         assertEquals(List.of(
                 "run_started", "message_delta", "tool_started", "tool_completed",
-                "citation", "question", "draft_ready", "run_completed", "error"
+                "citation", "question", "answer", "draft_ready", "run_completed", "error"
         ), emitter.eventNames);
         assertTrue(emitter.data.stream().allMatch(MessageDeltaPayload.class::isInstance));
     }

@@ -28,9 +28,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.reset;
@@ -107,17 +107,15 @@ class TopicIndexRabbitIntegrationTest {
     }
 
     @Test
-    void reportsFailureWhenTheBrokerCannotRouteAnIndexEvent() {
+    void doesNotFailTheRequestWhenTheBrokerCannotRouteAnIndexEvent() {
         listenerRegistry.stop();
         try {
             assertTrue(rabbitAdmin.deleteQueue(Const.MQ_TOPIC_INDEX));
 
             TopicIndexEventPublisher publisher = new TopicIndexEventPublisher(rabbitTemplate);
 
-            assertThrows(
-                    org.springframework.amqp.core.AmqpMessageReturnedException.class,
-                    () -> publisher.upsert(100)
-            );
+            // 路由失败只记录日志（索引可重建兜底），绝不能把业务请求打成失败
+            assertDoesNotThrow(() -> publisher.upsert(100));
         } finally {
             rabbitAdmin.initialize();
             listenerRegistry.start();
@@ -166,8 +164,16 @@ class TopicIndexRabbitIntegrationTest {
         }
 
         @Bean
-        TopicIndexEventConsumer topicIndexEventConsumer(TopicMapper mapper, TopicVectorIndexer indexer) {
-            return new TopicIndexEventConsumer(mapper, indexer);
+        TopicKeywordIndexer topicKeywordIndexer() {
+            return mock(TopicKeywordIndexer.class);
+        }
+
+        @Bean
+        TopicIndexEventConsumer topicIndexEventConsumer(
+                TopicMapper mapper,
+                TopicVectorIndexer indexer,
+                TopicKeywordIndexer keywordIndexer) {
+            return new TopicIndexEventConsumer(mapper, indexer, keywordIndexer);
         }
     }
 }

@@ -1,10 +1,15 @@
 package com.example.agent.run;
 
+import com.alibaba.fastjson2.JSONArray;
+import com.alibaba.fastjson2.JSONObject;
+import com.example.agent.core.AgentAnswerResult;
 import com.example.agent.core.AgentCitation;
 import com.example.agent.core.AgentDraftResult;
 import com.example.agent.core.AgentQuestionResult;
+import com.example.agent.core.AgentRunContext;
 import com.example.agent.core.AgentRunException;
 import com.example.agent.core.AgentRunFailure;
+import com.example.agent.core.AgentRunRequest;
 import com.example.agent.core.AgentRunner;
 import com.example.agent.session.AgentDraft;
 import com.example.agent.session.AgentDraftInput;
@@ -12,6 +17,8 @@ import com.example.agent.session.AgentMessageRole;
 import com.example.agent.session.AgentSession;
 import com.example.agent.session.AgentSessionAggregate;
 import com.example.agent.session.AgentSessionService;
+import com.example.entity.vo.response.WeatherVO;
+import com.example.service.WeatherService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -24,9 +31,12 @@ import java.util.concurrent.Executor;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -176,6 +186,99 @@ class AgentRunServiceTest {
         assertEquals("EXECUTION", error.code());
         assertTrue(error.retryable());
         assertFalse(service.hasActiveRun(99L));
+    }
+
+    @Test
+    void emitsAnswerWithCitationsAndPersistsAssistantMessage() {
+        AgentSessionService sessions = sessionsWithOwnedSession(7, 99L);
+        AgentRunner runner = (request, cancellation, observer) -> new AgentAnswerResult(
+                "东镇大街的牛腩口感很好，食材新鲜，但价格偏贵。",
+                List.of(new AgentCitation(42, "牛腩探店")));
+        RecordingSink sink = new RecordingSink();
+        AgentRunService service = service(sessions, runner, Runnable::run);
+
+        service.start(7, 99L, new AgentRunCommand("哪里有好吃的牛腩？", 0, null, null, null), sink);
+
+        assertEquals(List.of(
+                AgentSseEventType.RUN_STARTED,
+                AgentSseEventType.CITATION,
+                AgentSseEventType.ANSWER,
+                AgentSseEventType.RUN_COMPLETED), sink.types());
+        assertEquals("东镇大街的牛腩口感很好，食材新鲜，但价格偏贵。",
+                ((AnswerPayload) sink.payloads.get(2)).answer());
+        verify(sessions).appendMessage(
+                7, 99L, AgentMessageRole.ASSISTANT, "东镇大街的牛腩口感很好，食材新鲜，但价格偏贵。");
+    }
+
+    @Test
+    void injectsTimeAndWeatherContextIntoRunRequest() {
+        AgentSessionService sessions = sessionsWithOwnedSession(7, 99L);
+        WeatherService weather = mock(WeatherService.class);
+        when(weather.fetchWeather(anyDouble(), anyDouble())).thenReturn(sampleWeather());
+        List<AgentRunRequest> captured = new ArrayList<>();
+        AgentRunner runner = (request, cancellation, observer) -> {
+            captured.add(request);
+            return new AgentQuestionResult("q");
+        };
+        AgentRunService service = new AgentRunService(
+                sessions, runner, Runnable::run, new ObjectMapper(), () -> "run-1", weather, null);
+
+        service.start(
+                7,
+                99L,
+                new AgentRunCommand("哪里有好吃的牛腩？", 0, null, null, null, null, 116.4, 39.9),
+                new RecordingSink());
+
+        AgentRunContext context = captured.get(0).context();
+        assertNotNull(context);
+        assertTrue(context.timeText().contains("星期"));
+        assertTrue(context.weatherText().contains("User location: 北京"));
+        assertTrue(context.weatherText().contains("Current weather: 26°C, 小雨"));
+        assertTrue(context.weatherText().contains("12:00 24°C 中雨"));
+    }
+
+    @Test
+    void weatherFailureDegradesToNullContextWithoutFailingTheRun() {
+        AgentSessionService sessions = sessionsWithOwnedSession(7, 99L);
+        WeatherService weather = mock(WeatherService.class);
+        when(weather.fetchWeather(anyDouble(), anyDouble())).thenThrow(new RuntimeException("qweather down"));
+        List<AgentRunRequest> captured = new ArrayList<>();
+        AgentRunner runner = (request, cancellation, observer) -> {
+            captured.add(request);
+            return new AgentQuestionResult("q");
+        };
+        RecordingSink sink = new RecordingSink();
+        AgentRunService service = new AgentRunService(
+                sessions, runner, Runnable::run, new ObjectMapper(), () -> "run-1", weather, null);
+
+        service.start(7, 99L, new AgentRunCommand("问", 0, null, null, null), sink);
+
+        AgentRunContext context = captured.get(0).context();
+        assertNotNull(context);
+        assertNull(context.weatherText());
+        assertEquals(List.of(
+                AgentSseEventType.RUN_STARTED,
+                AgentSseEventType.QUESTION,
+                AgentSseEventType.RUN_COMPLETED), sink.types());
+    }
+
+    private WeatherVO sampleWeather() {
+        WeatherVO vo = new WeatherVO();
+        JSONObject location = new JSONObject();
+        location.put("name", "北京");
+        vo.setLocation(location);
+        JSONObject now = new JSONObject();
+        now.put("temp", "26");
+        now.put("text", "小雨");
+        vo.setNow(now);
+        JSONObject hour = new JSONObject();
+        hour.put("fxTime", "2026-08-30T12:00+08:00");
+        hour.put("temp", "24");
+        hour.put("text", "中雨");
+        JSONArray hourly = new JSONArray();
+        hourly.add(hour);
+        vo.setHourly(hourly);
+        return vo;
     }
 
     private AgentRunService service(AgentSessionService sessions, AgentRunner runner, Executor executor) {

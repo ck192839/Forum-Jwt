@@ -120,7 +120,8 @@ class TopicVectorElasticsearchIntegrationTest {
             query.set(invocation.getArgument(0));
             return List.of(visible);
         });
-        TopicIndexRebuildService rebuild = new TopicIndexRebuildService(mapper, indexer, Runnable::run);
+        TopicIndexRebuildService rebuild = new TopicIndexRebuildService(
+                mapper, indexer, mock(TopicKeywordIndexer.class), Runnable::run);
 
         assertTrue(rebuild.start());
         refresh();

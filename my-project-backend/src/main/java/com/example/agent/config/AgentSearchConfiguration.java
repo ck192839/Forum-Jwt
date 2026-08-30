@@ -2,6 +2,7 @@ package com.example.agent.config;
 
 import com.example.agent.index.TopicChunker;
 import com.example.agent.index.TopicIndexRebuildService;
+import com.example.agent.index.TopicKeywordIndexer;
 import com.example.agent.index.TopicVectorIndexer;
 import com.example.agent.search.ElasticsearchKeywordTopicRetriever;
 import com.example.agent.search.HybridTopicSearchService;
@@ -86,7 +87,8 @@ public class AgentSearchConfiguration {
     TopicIndexRebuildService topicIndexRebuildService(
             TopicMapper topicMapper,
             TopicVectorIndexer indexer,
+            TopicKeywordIndexer keywordIndexer,
             ExecutorService topicIndexExecutor) {
-        return new TopicIndexRebuildService(topicMapper, indexer, topicIndexExecutor);
+        return new TopicIndexRebuildService(topicMapper, indexer, keywordIndexer, topicIndexExecutor);
     }
 }

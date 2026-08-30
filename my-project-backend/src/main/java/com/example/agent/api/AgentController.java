@@ -159,7 +159,9 @@ public class AgentController {
                 editor == null ? null : editor.title(),
                 editor == null ? null : editor.topicTypeId(),
                 editor == null ? null : editor.bodyMarkdown(),
-                request.editorId()), sink);
+                request.editorId(),
+                request.longitude(),
+                request.latitude()), sink);
         runId.set(startedRunId);
         // 4. 处理「start 与断连之间的竞态」：若已断连则立即取消
         if (disconnected.get()) {

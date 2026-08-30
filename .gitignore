@@ -17,3 +17,6 @@ docs/
 
 # vitest 缓存（运行测试时在 worktree 根生成）
 node_modules/
+
+# ZCode 会话工作产物(plan 等),不入库
+.zcode/

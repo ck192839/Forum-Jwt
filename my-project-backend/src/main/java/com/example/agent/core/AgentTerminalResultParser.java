@@ -15,6 +15,7 @@ import java.util.Set;
  *
  * 设计核心是「严格白名单」：\n
  * - QUESTION 只允许 {type, question} 两个字段，多一个少一个都拒绝\n
+ * - ANSWER 只允许 {type, answer, citations}，citations 可为空数组（拒答场景）\n
  * - DRAFT 只允许 {type, title, topicTypeId, bodyMarkdown, citations,
  * basedOnEditorVersion}\n
  * - 引用 topicId 必须出现在 knownTopicIds（工具真实返回）里，且不重复、最多 6 条\n
@@ -26,6 +27,8 @@ import java.util.Set;
 public class AgentTerminalResultParser {
     // QUESTION 终态的精确字段集合
     private static final Set<String> QUESTION_FIELDS = Set.of("type", "question");
+    // ANSWER 终态的精确字段集合
+    private static final Set<String> ANSWER_FIELDS = Set.of("type", "answer", "citations");
     // DRAFT 终态的精确字段集合
     private static final Set<String> DRAFT_FIELDS = Set.of(
             "type", "title", "topicTypeId", "bodyMarkdown", "citations", "basedOnEditorVersion");
@@ -60,10 +63,11 @@ public class AgentTerminalResultParser {
         if (!root.isObject()) {
             throw invalid("Agent output must be a JSON object");
         }
-        // 按 type 字段分流：QUESTION / DRAFT
+        // 按 type 字段分流：QUESTION / ANSWER / DRAFT
         String type = requiredText(root, "type");
         return switch (type) {
             case "QUESTION" -> parseQuestion(root);
+            case "ANSWER" -> parseAnswer(root, knownTopicIds);
             case "DRAFT" -> parseDraft(root, editorVersion, knownTopicIds);
             default -> throw invalid("Unsupported Agent result type: " + type);
         };
@@ -75,6 +79,25 @@ public class AgentTerminalResultParser {
         String question = requiredText(root, "question").trim();
         requireLength(question, 1, 1000, "question");
         return new AgentQuestionResult(question);
+    }
+
+    /**
+     * 解析 ANSWER 终态（论坛问答）：
+     * - 精确字段集合，回答正文 1-4000 字\n
+     * - citations 允许为空数组（拒答 / 论坛中无相关内容时如实回答）\n
+     * - 非空时引用必须全部来自工具白名单
+     */
+    private AgentAnswerResult parseAnswer(JsonNode root, Set<Integer> knownTopicIds) {
+        requireExactFields(root, ANSWER_FIELDS);
+        String answer = requiredText(root, "answer").trim();
+        requireLength(answer, 1, 4_000, "answer");
+        JsonNode citationsNode = root.get("citations");
+        // citations 允许为空数组，但不允许为 null / 缺失 / 非数组
+        if (citationsNode == null || !citationsNode.isArray()) {
+            throw invalid("citations must be an array (possibly empty)");
+        }
+        List<AgentCitation> citations = parseCitations(citationsNode, knownTopicIds);
+        return new AgentAnswerResult(answer, citations);
     }
 
     /**
