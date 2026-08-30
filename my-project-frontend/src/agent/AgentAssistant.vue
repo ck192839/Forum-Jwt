@@ -174,7 +174,7 @@ async function resetAndNewSession() {
           <select
             :value="state.sessionId ?? ''"
             aria-label="Agent 会话"
-            :disabled="loading || submitting"
+            :disabled="loading"
             @change="selectSession(Number($event.target.value))">
             <option value="" disabled>选择会话</option>
             <option v-for="session in sessions" :key="session.id" :value="session.id">
@@ -182,7 +182,7 @@ async function resetAndNewSession() {
             </option>
           </select>
           <button type="button" class="icon-button" title="新建会话" aria-label="新建会话"
-                  :disabled="submitting" @click="resetAndNewSession">
+                  @click="resetAndNewSession">
             <Plus/>
           </button>
           <button type="button" class="icon-button danger" title="删除会话" aria-label="删除会话"
@@ -221,7 +221,8 @@ async function resetAndNewSession() {
             </div>
 
             <div v-if="state.streamingText" class="message assistant streaming">
-              {{ state.streamingText }}
+              <!-- eslint-disable-next-line vue/no-v-html — 内容已经 sanitizeMarkdown 消毒 -->
+              <div class="message-body" v-html="assistantHtml(state.streamingText)"></div>
             </div>
 
             <section v-if="state.timeline.length" class="tool-timeline" aria-label="工具执行状态">
@@ -259,8 +260,8 @@ async function resetAndNewSession() {
         </main>
 
         <footer class="agent-composer">
-          <textarea v-model="prompt" rows="3" maxlength="8000" placeholder="描述发帖需求..."
-                    :disabled="submitting" @keydown="submitOnShortcut"></textarea>
+          <textarea v-model="prompt" rows="3" maxlength="8000" placeholder="问我论坛内容相关的问题，或描述发帖需求..."
+                    @keydown="submitOnShortcut"></textarea>
           <button v-if="submitting" type="button" class="composer-command run-cancel" @click="cancel">
             <VideoPause/>取消
           </button>

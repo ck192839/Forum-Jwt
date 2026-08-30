@@ -93,6 +93,29 @@ class ForumReActAgentTest {
         }
 
         @Test
+        void streamsDecodedVisibleTextWhileTheAnswerIsStillBeingGenerated() {
+                ChatModel model = mock(ChatModel.class);
+                when(((StreamingChatModel) model).stream(org.mockito.ArgumentMatchers.any(Prompt.class))).thenReturn(
+                                Flux.just(
+                                                response("{\"type\":\"ANS"),
+                                                response("WER\",\"answer\":\"东镇大街"),
+                                                response("的牛腩口感很好，"),
+                                                response("食材新鲜。\",\"citations\":[]}")));
+                RecordingObserver observer = new RecordingObserver();
+                ForumReActAgent agent = agent(model, emptyTools(), 8, Duration.ofSeconds(2));
+
+                agent.run(
+                                new AgentRunRequest("哪里有好吃的牛腩？", 3, List.of()),
+                                new AgentCancellationToken(),
+                                observer);
+
+                // 打字机效果：增量是解码后的正文（不含 JSON 结构），且按顺序拼接等于完整正文
+                String streamed = String.join("", observer.deltas);
+                assertEquals("东镇大街的牛腩口感很好，食材新鲜。", streamed);
+                assertTrue(observer.deltas.stream().noneMatch(delta -> delta.contains("{")));
+        }
+
+        @Test
         void treatsAToolEncodedQuestionAsATerminalResult() {
                 ChatModel model = prompt -> toolCall(
                                 "call-question",
@@ -591,6 +614,7 @@ class ForumReActAgentTest {
         private static final class RecordingObserver implements AgentRunObserver {
                 private final List<String> started = new ArrayList<>();
                 private final List<String> completed = new ArrayList<>();
+                private final List<String> deltas = new ArrayList<>();
 
                 @Override
                 public void toolStarted(String name, String arguments) {
@@ -600,6 +624,11 @@ class ForumReActAgentTest {
                 @Override
                 public void toolCompleted(String name, String result) {
                         completed.add(name);
+                }
+
+                @Override
+                public void onModelDelta(String text) {
+                        deltas.add(text);
                 }
         }
 }

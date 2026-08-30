@@ -262,6 +262,24 @@ class AgentRunServiceTest {
                 AgentSseEventType.RUN_COMPLETED), sink.types());
     }
 
+    @Test
+    void streamsModelDeltasAsMessageDeltaEvents() {
+        AgentSessionService sessions = sessionsWithOwnedSession(7, 99L);
+        AgentRunner runner = (request, cancellation, observer) -> {
+            observer.onModelDelta("正在检索");
+            observer.onModelDelta("历史帖子");
+            return new AgentQuestionResult("q");
+        };
+        RecordingSink sink = new RecordingSink();
+        AgentRunService service = service(sessions, runner, Runnable::run);
+
+        service.start(7, 99L, new AgentRunCommand("问", 0, null, null, null), sink);
+
+        // 第一个增量立即刷出（后续的在节流窗内可能合并/丢弃，终态事件兜底完整正文）
+        assertEquals(AgentSseEventType.MESSAGE_DELTA, sink.types().get(1));
+        assertEquals("正在检索", ((MessageDeltaPayload) sink.payloads.get(1)).text());
+    }
+
     private WeatherVO sampleWeather() {
         WeatherVO vo = new WeatherVO();
         JSONObject location = new JSONObject();

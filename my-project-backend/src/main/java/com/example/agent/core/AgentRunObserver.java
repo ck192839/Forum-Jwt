@@ -21,4 +21,12 @@ public interface AgentRunObserver {
     /** 工具调用完成（name 为工具名，result 为工具返回的原始 JSON）。 */
     default void toolCompleted(String name, String result) {
     }
+
+    /**
+     * 模型流式输出的「可见文本」增量（已从终态 JSON 中增量解码，
+     * 不含 {type/引号等 JSON 结构，可直接展示给用户）。
+     * 由调用方节流后转成 message_delta SSE 事件。
+     */
+    default void onModelDelta(String text) {
+    }
 }

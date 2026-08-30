@@ -10,7 +10,17 @@ export function createAgentAssistantController(api = defaultApi) {
   const loading = ref(false)
   const submitting = ref(false)
   let initialized = false
-  let abortController = null
+  // sessionId → 进行中 run 的 AbortController（后端按会话互斥，不同会话可并行）
+  const activeRuns = new Map()
+
+  function isRunActive(sessionId) {
+    return activeRuns.has(sessionId)
+  }
+
+  /** 「处理中」指示跟随当前查看的会话：查看的会话有 run 在跑才算忙。 */
+  function syncRunIndicator() {
+    submitting.value = isRunActive(state.sessionId)
+  }
 
   async function initialize() {
     if (initialized) return
@@ -34,6 +44,8 @@ export function createAgentAssistantController(api = defaultApi) {
   async function selectSession(sessionId) {
     const detail = await api.getAgentSession(sessionId)
     restoreAgentSession(state, detail)
+    // 切回有 run 在跑的会话时恢复「处理中」指示；后台 run 的事件由订阅回调按会话过滤
+    syncRunIndicator()
   }
 
   async function newSession() {
@@ -53,7 +65,8 @@ export function createAgentAssistantController(api = defaultApi) {
   }
 
   async function submit(editorContext = {}) {
-    if (submitting.value) return false
+    // 同一会话已有 run 在跑则拒绝（后端也会 409）；其他会话的 run 不受影响
+    if (isRunActive(state.sessionId)) return false
     const message = prompt.value.trim()
     const hasExplicitEditorContext = editorContext.editorDraft
       || editorContext.editorId
@@ -62,17 +75,25 @@ export function createAgentAssistantController(api = defaultApi) {
       ? editorContext
       : (state.editorContext || editorContext)
     if (!message && !effectiveEditorContext.editorDraft) return false
-    submitting.value = true
 
     try {
       if (state.sessionId == null) await newSession()
+    } catch (error) {
+      return false
+    }
+    // 本次 run 所属的会话（期间用户可能切走，事件按此过滤）
+    const runSessionId = state.sessionId
+    const controller = new AbortController()
+    activeRuns.set(runSessionId, controller)
+    syncRunIndicator()
+
+    try {
       if (message) {
         state.messages.push({ role: 'USER', content: message, createdAt: new Date().toISOString() })
       }
       prompt.value = ''
       state.runStatus = 'starting'
       state.error = null
-      abortController = new AbortController()
 
       const request = {
         message: message || null,
@@ -88,14 +109,18 @@ export function createAgentAssistantController(api = defaultApi) {
       }
 
       await api.startAgentRun(
-        state.sessionId,
+        runSessionId,
         request,
-        event => applyAgentEvent(state, event),
-        abortController.signal
+        // 用户切到别的会话时丢弃事件（已落库，切回时重新拉快照 + 续接实时流）
+        event => {
+          if (state.sessionId === runSessionId) applyAgentEvent(state, event)
+        },
+        controller.signal
       )
       return true
     } catch (error) {
-      if (abortController?.signal.aborted || error?.name === 'AbortError') {
+      if (state.sessionId !== runSessionId) return false
+      if (controller.signal.aborted || error?.name === 'AbortError') {
         state.runStatus = 'cancelled'
       } else {
         state.runStatus = 'error'
@@ -105,14 +130,15 @@ export function createAgentAssistantController(api = defaultApi) {
           retryable: true
         }
       }
+      return false
     } finally {
-      submitting.value = false
-      abortController = null
+      if (activeRuns.get(runSessionId) === controller) activeRuns.delete(runSessionId)
+      syncRunIndicator()
     }
   }
 
   async function cancel() {
-    const controller = abortController
+    const controller = activeRuns.get(state.sessionId)
     if (!controller) return
     try {
       if (state.runId) await api.cancelAgentRun(state.runId)

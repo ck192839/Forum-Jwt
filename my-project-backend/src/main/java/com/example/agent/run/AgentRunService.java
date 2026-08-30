@@ -37,6 +37,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import java.util.UUID;
@@ -65,6 +66,8 @@ public class AgentRunService {
     // 和风天气逐小时预报的 fxTime（如 "2026-08-30T11:00+08:00"）中 HH:mm 的位置
     private static final int FX_TIME_HOUR_START = 11;
     private static final int FX_TIME_HOUR_END = 16;
+    // message_delta 的刷出间隔：太密会产生海量落库小事件，太疏失去打字机效果
+    private static final long DELTA_FLUSH_INTERVAL_NANOS = TimeUnit.MILLISECONDS.toNanos(150);
 
     private final AgentSessionService sessionService; // 会话读写
     private final AgentRunner agentRunner; // 核心 Agent（ForumReActAgent）
@@ -357,8 +360,15 @@ public class AgentRunService {
         }
     }
 
-    /** 构造观察者：把 Agent 的工具开始/完成回调转成 SSE 事件（前端时间线）。 */
+    /**
+     * 构造观察者：把 Agent 的工具开始/完成回调转成 SSE 事件（前端时间线）；
+     * 模型可见文本增量按时间窗节流后以 message_delta 事件推送
+     * （每个事件都要落库，逐 token 发送会产生海量小事件；
+     * 终态事件发出后残余的未刷出增量直接丢弃——完整正文会随 question/answer/draft_ready 到达）。
+     */
     private AgentRunObserver observer(ActiveRun run) {
+        StringBuilder pendingDelta = new StringBuilder();
+        long[] lastFlushNanos = {0};
         return new AgentRunObserver() {
             @Override
             public void toolStarted(String name, String arguments) {
@@ -368,6 +378,17 @@ public class AgentRunService {
             @Override
             public void toolCompleted(String name, String result) {
                 emit(run, AgentSseEventType.TOOL_COMPLETED, new ToolEventPayload(run.runId(), name));
+            }
+
+            @Override
+            public void onModelDelta(String text) {
+                pendingDelta.append(text);
+                long now = System.nanoTime();
+                if (now - lastFlushNanos[0] >= DELTA_FLUSH_INTERVAL_NANOS) {
+                    emit(run, AgentSseEventType.MESSAGE_DELTA, new MessageDeltaPayload(pendingDelta.toString()));
+                    pendingDelta.setLength(0);
+                    lastFlushNanos[0] = now;
+                }
             }
         };
     }

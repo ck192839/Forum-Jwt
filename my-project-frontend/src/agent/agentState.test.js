@@ -49,10 +49,12 @@ describe('agent state', () => {
 
   test('merges the typed live event stream without exposing internal reasoning', () => {
     const state = createAgentState()
+    applyAgentEvent(state, { type: 'run_started', payload: { runId: 'r2', sessionId: 9 } })
+    applyAgentEvent(state, { type: 'message_delta', payload: { text: '正在检查' } })
+    applyAgentEvent(state, { type: 'message_delta', payload: { text: '历史帖子' } })
+    expect(state.streamingText).toBe('正在检查历史帖子')
+
     const events = [
-      ['run_started', { runId: 'r2', sessionId: 9 }],
-      ['message_delta', { text: '正在检查' }],
-      ['message_delta', { text: '历史帖子' }],
       ['tool_started', { runId: 'r2', toolName: 'search_similar_topics' }],
       ['tool_completed', { runId: 'r2', toolName: 'search_similar_topics' }],
       ['citation', { topicId: 12, title: '校园网指南' }],
@@ -73,7 +75,8 @@ describe('agent state', () => {
     events.forEach(([type, payload]) => applyAgentEvent(state, { type, payload }))
 
     expect(state.runId).toBe('r2')
-    expect(state.streamingText).toBe('正在检查历史帖子')
+    // 终态消息到达后打字机缓冲被清空，避免与正式消息重复
+    expect(state.streamingText).toBe('')
     expect(state.citations).toHaveLength(0)
     expect(state.question).toBe('适用于哪个宿舍楼？')
     // 每轮的工具行为与引用挂在对应消息上，而不是全局状态

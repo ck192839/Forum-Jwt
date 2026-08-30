@@ -87,6 +87,14 @@ export function restoreAgentSession(state, detail) {
         resetRunBuffers(state)
         state.editorContext = null
         break
+      case 'run_started':
+        // 切回仍在运行的会话时，需要 runId 才能取消
+        state.runId = event.payload?.runId ?? state.runId
+        state.runStatus = 'running'
+        break
+      case 'run_completed':
+        state.runStatus = String(event.payload?.status || 'completed').toLowerCase()
+        break
       default:
         break
     }
@@ -161,6 +169,7 @@ export function applyAgentEvent(state, event) {
         createdAt: new Date().toISOString(),
         ...takeRunArtifacts(state)
       })
+      state.streamingText = '' // 完整消息已到达，清空打字机缓冲
       state.question = payload.question
       state.editorContext = payload.targetEditorId
         ? {
@@ -176,6 +185,7 @@ export function applyAgentEvent(state, event) {
         createdAt: new Date().toISOString(),
         ...takeRunArtifacts(state)
       })
+      state.streamingText = ''
       state.question = null
       state.editorContext = null
       break
@@ -186,6 +196,7 @@ export function applyAgentEvent(state, event) {
         createdAt: new Date().toISOString(),
         ...takeRunArtifacts(state)
       })
+      state.streamingText = ''
       state.draft = {
         title: payload.title,
         topicTypeId: payload.topicTypeId,

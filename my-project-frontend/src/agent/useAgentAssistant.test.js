@@ -164,6 +164,61 @@ describe('Agent assistant controller', () => {
     expect(api.startAgentRun).toHaveBeenCalledTimes(1)
   })
 
+  test('events of a background run stay with their session across switches', async () => {
+    let emitRunEvent
+    const sessionDetail = id => (id === 5
+      ? {
+        session: { id: 5, status: 'ACTIVE' },
+        messages: [],
+        events: [{
+          id: 1, runId: 'run-5', sequence: 1, type: 'run_started',
+          payload: { runId: 'run-5', sessionId: 5 }, createdAt: '2026-08-30T01:00:00Z'
+        }],
+        draft: null
+      }
+      : detail(id))
+    const api = {
+      listRecentAgentSessions: vi.fn().mockResolvedValue([
+        { id: 5, status: 'ACTIVE' },
+        { id: 6, status: 'ACTIVE' }
+      ]),
+      getAgentSession: vi.fn(id => Promise.resolve(sessionDetail(id))),
+      startAgentRun: vi.fn(async (sessionId, request, onEvent) => {
+        onEvent({ type: 'run_started', payload: { runId: 'run-5', sessionId } })
+        emitRunEvent = event => onEvent(event)
+        await new Promise(resolve => { release = resolve })
+      }),
+      cancelAgentRun: vi.fn().mockResolvedValue(null)
+    }
+    let release
+    const controller = createAgentAssistantController(api)
+    await controller.initialize()
+    controller.prompt.value = '哪里有好吃的牛腩？'
+
+    const running = controller.submit()
+    await vi.waitFor(() => expect(controller.state.runId).toBe('run-5'))
+    expect(controller.submitting.value).toBe(true)
+
+    // 切到会话 6：后台 run 的事件不得污染当前视图，忙指示解除，可继续打字/发消息
+    await controller.selectSession(6)
+    expect(controller.state.sessionId).toBe(6)
+    expect(controller.submitting.value).toBe(false)
+    emitRunEvent({ type: 'answer', payload: { answer: 'A 会话的回答' } })
+    expect(controller.state.messages).toEqual([{ id: 1, role: 'USER', content: 'session 6' }])
+
+    // 切回会话 5：恢复「处理中」指示，且能取到 runId 继续取消
+    await controller.selectSession(5)
+    expect(controller.submitting.value).toBe(true)
+    expect(controller.state.runId).toBe('run-5')
+
+    await controller.cancel()
+    release()
+    await running
+
+    expect(api.cancelAgentRun).toHaveBeenCalledWith('run-5')
+    expect(controller.submitting.value).toBe(false)
+  })
+
   test('attaches the cached user location to the run request', async () => {
     const geolocation = {
       getCurrentPosition: success => success({ coords: { longitude: 120.1, latitude: 30.2 } })

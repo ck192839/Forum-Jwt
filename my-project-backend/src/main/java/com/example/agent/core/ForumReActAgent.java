@@ -202,9 +202,11 @@ public final class ForumReActAgent implements AgentRunner {
 
         while (true) {
             Prompt currentPrompt = prompt;
+            // 每个模型响应用一个新提取器：从流式 chunk 中增量解码可见文本（打字机效果）
+            TerminalTextExtractor extractor = new TerminalTextExtractor();
             // 1. 调用模型（在预算内执行，超时/取消会在内部抛出）
             ChatResponse response = executeWithinBudget(
-                    () -> invokeModel(currentPrompt, cancellation),
+                    () -> invokeModel(currentPrompt, cancellation, extractor, observer),
                     cancellation,
                     deadline);
             if (response == null || response.getResult() == null || response.getResult().getOutput() == null) {
@@ -543,15 +545,18 @@ public final class ForumReActAgent implements AgentRunner {
     }
 
     /**
-     * 调用模型：优先走流式（stream），若模型不支持流式则降级为一次性 call。
-     * 
+     * 调用模型：优先走流式（stream，期间经提取器回调可见文本增量），
+     * 若模型不支持流式则降级为一次性 call（无打字机效果，终态事件兜底）。
+     *
      * @param cancellation 参数仅为保持签名一致（实际取消由 executeWithinBudget 统一处理）
      */
     private ChatResponse invokeModel(
             Prompt prompt,
-            AgentCancellationToken cancellation) {
+            AgentCancellationToken cancellation,
+            TerminalTextExtractor extractor,
+            AgentRunObserver observer) {
         try {
-            return streamResponse((StreamingChatModel) chatModel, prompt);
+            return streamResponse((StreamingChatModel) chatModel, prompt, extractor, observer);
         } catch (UnsupportedOperationException unsupported) {
             return chatModel.call(prompt);
         }
@@ -564,7 +569,9 @@ public final class ForumReActAgent implements AgentRunner {
      */
     private ChatResponse streamResponse(
             StreamingChatModel model,
-            Prompt prompt) {
+            Prompt prompt,
+            TerminalTextExtractor extractor,
+            AgentRunObserver observer) {
         Map<String, AssistantMessage.ToolCall> toolCalls = new LinkedHashMap<>();
         StringBuilder text = new StringBuilder();
         model.stream(prompt).doOnNext(chunk -> {
@@ -574,6 +581,11 @@ public final class ForumReActAgent implements AgentRunner {
             AssistantMessage output = chunk.getResult().getOutput();
             if (output.getText() != null && !output.getText().isEmpty()) {
                 text.append(output.getText());
+                // 从流式 chunk 中增量解码可见文本（answer/question/bodyMarkdown）并回调
+                String visibleDelta = extractor.append(output.getText());
+                if (!visibleDelta.isEmpty()) {
+                    observer.onModelDelta(visibleDelta);
+                }
             }
             if (output.getToolCalls() != null) {
                 output.getToolCalls().forEach(toolCall -> {
