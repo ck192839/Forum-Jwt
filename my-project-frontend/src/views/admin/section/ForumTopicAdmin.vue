@@ -1,5 +1,5 @@
 <script setup>
-import {Hide, Lock, Search, Top, User} from "@element-plus/icons-vue";
+import {Delete, Hide, Lock, Search, Top, User} from "@element-plus/icons-vue";
 import {ElMessage, ElMessageBox} from "element-plus";
 import {
     apiForumTopicAllList,
@@ -21,7 +21,8 @@ const topicList = reactive({
     list: [],
     page: 1,
     size: 10,
-    total: 0
+    total: 0,
+    blocked: 0
 })
 
 const keyword = ref('')
@@ -73,6 +74,7 @@ const refreshList = () => {
     apiForumTopicAllList(topicList.page, topicList.size, keyword.value, data => {
         topicList.list = data.list;
         topicList.total = data.total;
+        topicList.blocked = data.blocked ?? 0;
     })
 }
 
@@ -141,19 +143,29 @@ watchEffect(() => refreshList())
         </el-table-column>
         <el-table-column prop="time" label="发表时间" width="180" align="center"
                          :formatter="row => new Date(row.time).toLocaleString()"/>
-        <el-table-column label="操作" width="270" fixed="right" align="center">
+        <el-table-column label="操作" width="340" fixed="right" align="center">
             <template #default="{ row }">
-                <el-button size="small" type="info" @click="invisibleTopic(row.id, false)" v-if="row.invisible">取消</el-button>
-                <el-button size="small" type="info" @click="invisibleTopic(row.id, true)" plain v-else>屏蔽</el-button>
-                <el-button size="small" type="warning" @click="lockTopic(row.id, false)" v-if="row.locked">取消</el-button>
-                <el-button size="small" type="warning" @click="lockTopic(row.id, true)" plain v-else>锁定</el-button>
-                <el-button size="small" type="success" @click="topTopic(row.id, false)" v-if="row.top">取消</el-button>
-                <el-button size="small" type="success" @click="topTopic(row.id, true)" plain v-else>置顶</el-button>
-                <el-button size="small" type="danger" plain @click="deleteTopic(row.id)">删除</el-button>
+                <el-button size="small" type="info" :icon="Hide"
+                           @click="invisibleTopic(row.id, false)" v-if="row.invisible">取消</el-button>
+                <el-button size="small" type="info" :icon="Hide" plain
+                           @click="invisibleTopic(row.id, true)" v-else>屏蔽</el-button>
+                <el-button size="small" type="warning" :icon="Lock"
+                           @click="lockTopic(row.id, false)" v-if="row.locked">取消</el-button>
+                <el-button size="small" type="warning" :icon="Lock" plain
+                           @click="lockTopic(row.id, true)" v-else>锁定</el-button>
+                <el-button size="small" type="success" :icon="Top"
+                           @click="topTopic(row.id, false)" v-if="row.top">取消</el-button>
+                <el-button size="small" type="success" :icon="Top" plain
+                           @click="topTopic(row.id, true)" v-else>置顶</el-button>
+                <el-button size="small" type="danger" :icon="Delete" plain @click="deleteTopic(row.id)">删除</el-button>
             </template>
         </el-table-column>
     </el-table>
     <div class="pagination">
+        <div class="blocked-stat" role="status">
+            <el-icon><Hide/></el-icon>
+            已屏蔽 {{ topicList.blocked }} 篇帖子
+        </div>
         <el-pagination :total="topicList.total"
                        v-model:current-page="topicList.page"
                        v-model:page-size="topicList.size"
@@ -181,7 +193,22 @@ watchEffect(() => refreshList())
 .pagination {
     margin-top: 20px;
     display: flex;
-    justify-content: right;
+    justify-content: space-between;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+}
+
+.blocked-stat {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: #b45309;
+    font-size: 13px;
+}
+
+.dark .blocked-stat {
+    color: #d97706;
 }
 
 .topic-username {

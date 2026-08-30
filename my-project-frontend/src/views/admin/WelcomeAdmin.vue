@@ -17,6 +17,7 @@ const store = useStore()
 const totals = reactive({
     users: null,
     topics: null,
+    blocked: null,
     failedEmails: null
 })
 
@@ -36,9 +37,15 @@ const dateLabel = new Intl.DateTimeFormat('zh-CN', {
 }).format(new Date())
 
 const metrics = computed(() => [
-    {label: '注册用户', value: totals.users, icon: User, tone: 'green'},
-    {label: '论坛帖子', value: totals.topics, icon: ChatDotSquare, tone: 'amber'},
-    {label: '待处理邮件', value: totals.failedEmails, icon: Message, tone: 'danger'}
+    {label: '注册用户', value: totals.users, icon: User, tone: 'green', note: null},
+    {
+        label: '论坛帖子',
+        value: totals.topics,
+        icon: ChatDotSquare,
+        tone: 'amber',
+        note: totals.blocked == null ? null : `其中被屏蔽 ${totals.blocked} 篇`
+    },
+    {label: '待处理邮件', value: totals.failedEmails, icon: Message, tone: 'danger', note: null}
 ])
 
 const shortcuts = [
@@ -64,7 +71,10 @@ const shortcuts = [
 
 onMounted(() => {
     apiUserList(1, 1, '', data => totals.users = data.total)
-    apiForumTopicAllList(1, 1, '', data => totals.topics = data.total)
+    apiForumTopicAllList(1, 1, '', data => {
+        totals.topics = data.total
+        totals.blocked = data.blocked ?? 0
+    })
     apiEmailFailedTotal(total => totals.failedEmails = total)
 })
 </script>
@@ -87,6 +97,7 @@ onMounted(() => {
                 <div>
                     <div class="metric-label">{{ metric.label }}</div>
                     <div class="metric-value">{{ metric.value ?? '--' }}</div>
+                    <div v-if="metric.note" class="metric-note">{{ metric.note }}</div>
                 </div>
             </article>
         </section>
@@ -246,6 +257,12 @@ onMounted(() => {
     font-size: 27px;
     font-weight: 750;
     line-height: 1.1;
+}
+
+.metric-note {
+    margin-top: 4px;
+    color: #b45309;
+    font-size: 12px;
 }
 
 .overview-grid {
@@ -414,6 +431,10 @@ onMounted(() => {
     .metric-value,
     .session-details dd {
         color: #edf1ef;
+    }
+
+    .metric-note {
+        color: #d97706;
     }
 
     .shortcut-row:hover {

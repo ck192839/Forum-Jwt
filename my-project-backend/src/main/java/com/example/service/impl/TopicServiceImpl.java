@@ -332,6 +332,7 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
         JSONObject object = new JSONObject();
         object.put("total", topicPage.getTotal());
         object.put("list", list);
+        object.put("blocked", baseMapper.selectCount(Wrappers.<Topic>query().eq("invisible", 1)));
         return object;
     }
 

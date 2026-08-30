@@ -32,7 +32,8 @@ public class ForumAdminController {
         return PageRestBean.success(
                 result.getJSONArray("list").toList(TopicPreviewVO.class),
                 result.getIntValue("total"),
-                page
+                page,
+                result.getLongValue("blocked")
         );
     }
     @GetMapping("/delete")
