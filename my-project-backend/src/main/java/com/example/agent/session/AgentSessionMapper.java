@@ -14,7 +14,8 @@ import java.util.List;
  * 会话表的 MyBatis-Plus Mapper。
  * 自定义 SQL 原则：所有按 uid 过滤的查询都带「归属校验」（uid = ?），
  * 保证多租户隔离——用户只能操作自己的会话。
- * 表结构：agent_session(id, uid, status, created_at, updated_at, expires_at)
+ * 表结构：agent_session(id, uid, status, created_at, updated_at, expires_at,
+ *               context_summary, summarized_message_id)
  */
 @Mapper
 public interface AgentSessionMapper extends BaseMapper<AgentSession> {
@@ -39,7 +40,7 @@ public interface AgentSessionMapper extends BaseMapper<AgentSession> {
 
         /** 查询最近 limit 条「未过期」的会话（按最后活动时间倒序）。 */
         @Select("""
-                        SELECT id, uid, status, created_at, updated_at, expires_at
+                        SELECT id, uid, status, created_at, updated_at, expires_at, context_summary, summarized_message_id
                         FROM agent_session
                         WHERE uid = #{uid} AND expires_at > #{now}
                         ORDER BY updated_at DESC, id DESC
@@ -52,7 +53,7 @@ public interface AgentSessionMapper extends BaseMapper<AgentSession> {
 
         /** 查询最近一条「ACTIVE 且未过期」的会话（前端恢复时自动选中）。 */
         @Select("""
-                        SELECT id, uid, status, created_at, updated_at, expires_at
+                        SELECT id, uid, status, created_at, updated_at, expires_at, context_summary, summarized_message_id
                         FROM agent_session
                         WHERE uid = #{uid}
                           AND status = 'ACTIVE'
@@ -66,7 +67,7 @@ public interface AgentSessionMapper extends BaseMapper<AgentSession> {
 
         /** 按 id + uid 查询（归属校验，不存在返回 null）。 */
         @Select("""
-                        SELECT id, uid, status, created_at, updated_at, expires_at
+                        SELECT id, uid, status, created_at, updated_at, expires_at, context_summary, summarized_message_id
                         FROM agent_session
                         WHERE id = #{sessionId} AND uid = #{uid}
                         """)
@@ -90,4 +91,19 @@ public interface AgentSessionMapper extends BaseMapper<AgentSession> {
         /** 删除所有已过期的会话（定时清理任务调用，不需要 uid 过滤）。 */
         @Delete("DELETE FROM agent_session WHERE expires_at <= #{now}")
         int deleteExpired(@Param("now") Timestamp now);
+
+        /**
+         * 写入滚动摘要并推进覆盖点（后台摘要任务调用，带 uid 归属校验）。
+         * 故意不更新 updated_at：摘要是后台卫生工作，不应把会话顶到列表最前。
+         */
+        @Update("""
+                        UPDATE agent_session
+                        SET context_summary = #{summary}, summarized_message_id = #{summarizedMessageId}
+                        WHERE id = #{sessionId} AND uid = #{uid}
+                        """)
+        int updateContextSummary(
+                        @Param("sessionId") long sessionId,
+                        @Param("uid") int uid,
+                        @Param("summary") String summary,
+                        @Param("summarizedMessageId") long summarizedMessageId);
 }

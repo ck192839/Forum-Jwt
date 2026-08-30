@@ -20,6 +20,7 @@ import com.example.agent.session.AgentSessionService;
 import com.example.entity.vo.response.WeatherVO;
 import com.example.service.WeatherService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.ai.chat.messages.Message;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -31,6 +32,7 @@ import java.util.concurrent.Executor;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -278,6 +280,69 @@ class AgentRunServiceTest {
         // 第一个增量立即刷出（后续的在节流窗内可能合并/丢弃，终态事件兜底完整正文）
         assertEquals(AgentSseEventType.MESSAGE_DELTA, sink.types().get(1));
         assertEquals("正在检索", ((MessageDeltaPayload) sink.payloads.get(1)).text());
+    }
+
+    @Test
+    void buildsRunHistoryThroughTheContextPlanner() {
+        // 会话带滚动摘要 → 传给 AgentRunner 的历史应包含摘要 SystemMessage + 逐字消息
+        AgentSessionService sessions = mock(AgentSessionService.class);
+        AgentSession session = new AgentSession();
+        session.setId(99L);
+        session.setUid(7);
+        session.setContextSummary("User previously asked about noodle shops.");
+        session.setSummarizedMessageId(1L);
+        com.example.agent.session.AgentMessage recent =
+                new com.example.agent.session.AgentMessage();
+        recent.setId(2L);
+        recent.setSessionId(99L);
+        recent.setRole(AgentMessageRole.USER);
+        recent.setContent("any cheaper options?");
+        when(sessions.load(7, 99L)).thenReturn(new AgentSessionAggregate(
+                session,
+                List.of(recent),
+                List.of(),
+                null));
+        List<List<Message>> capturedHistories = new ArrayList<>();
+        AgentRunner runner = (request, cancellation, observer) -> {
+            capturedHistories.add(request.history());
+            return new AgentQuestionResult("q");
+        };
+        AgentRunService service = service(sessions, runner, Runnable::run);
+
+        service.start(7, 99L, new AgentRunCommand("问", 0, null, null, null), new RecordingSink());
+
+        assertEquals(1, capturedHistories.size());
+        List<Message> history = capturedHistories.get(0);
+        assertEquals(2, history.size()); // 摘要 SystemMessage + 1 条逐字消息（id>覆盖点）
+        org.springframework.ai.chat.messages.SystemMessage summary =
+                assertInstanceOf(org.springframework.ai.chat.messages.SystemMessage.class, history.get(0));
+        assertTrue(summary.getText().contains("noodle shops"));
+        assertTrue(history.get(1).getText().contains("any cheaper options?"));
+    }
+
+    @Test
+    void emitsAndPersistsContextNoticeWhenObserverReportsDegradation() {
+        AgentSessionService sessions = sessionsWithOwnedSession(7, 99L);
+        AgentRunner runner = (request, cancellation, observer) -> {
+            observer.onContextNotice("Earlier conversation exceeded the model window.");
+            return new AgentQuestionResult("q");
+        };
+        RecordingSink sink = new RecordingSink();
+        AgentRunService service = service(sessions, runner, Runnable::run);
+
+        service.start(7, 99L, new AgentRunCommand("问", 0, null, null, null), sink);
+
+        // 通知事件既推 SSE 又落库（会话恢复时可重放）
+        assertTrue(sink.types().contains(AgentSseEventType.CONTEXT_NOTICE));
+        ContextNoticePayload notice = (ContextNoticePayload) sink.payloads.get(1);
+        assertEquals("Earlier conversation exceeded the model window.", notice.text());
+        verify(sessions).appendEvent(
+                org.mockito.ArgumentMatchers.eq(7),
+                org.mockito.ArgumentMatchers.eq(99L),
+                org.mockito.ArgumentMatchers.eq("run-1"),
+                anyInt(),
+                org.mockito.ArgumentMatchers.eq("context_notice"),
+                anyString());
     }
 
     private WeatherVO sampleWeather() {

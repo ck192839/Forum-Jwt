@@ -260,7 +260,9 @@ class RealModelAgentEvaluationIT {
                 typeMapper,
                 topicMapper,
                 retrievalEvaluator.searchService(),
-                prohibited
+                prohibited,
+                200,
+                8000
         );
     }
 

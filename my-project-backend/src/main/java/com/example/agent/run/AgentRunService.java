@@ -11,9 +11,11 @@ import com.example.agent.core.AgentRunObserver;
 import com.example.agent.core.AgentRunRequest;
 import com.example.agent.core.AgentRunner;
 import com.example.agent.core.AgentTerminalResult;
+import com.example.agent.context.AgentContextPlanner;
+import com.example.agent.context.AgentContextProperties;
+import com.example.agent.context.AgentSessionSummarizer;
 import com.example.agent.session.AgentDraft;
 import com.example.agent.session.AgentDraftInput;
-import com.example.agent.session.AgentMessage;
 import com.example.agent.session.AgentMessageRole;
 import com.example.agent.session.AgentSessionAggregate;
 import com.example.agent.session.AgentSessionService;
@@ -23,9 +25,7 @@ import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
-import org.springframework.ai.chat.messages.UserMessage;
 
 import java.time.Clock;
 import java.time.LocalDateTime;
@@ -76,6 +76,8 @@ public class AgentRunService {
     private final Supplier<String> runIdSupplier; // runId 生成器（默认 UUID）
     private final WeatherService weatherService; // 天气服务（可为 null，表示禁用天气上下文）
     private final Clock clock; // 时钟（可注入测试时钟）
+    private final AgentContextPlanner contextPlanner; // 历史预算组装（摘要 + 近期窗口 + token 上限）
+    private final AgentSessionSummarizer summarizer; // 滚动摘要器（可为 null，表示禁用摘要）
     // 会话 id → 当前 runId（保证互斥）
     private final Map<Long, String> sessionRuns = new ConcurrentHashMap<>();
     // runId → 活跃 run（用于取消/查找）
@@ -109,6 +111,29 @@ public class AgentRunService {
             Supplier<String> runIdSupplier,
             WeatherService weatherService,
             Clock clock) {
+        this(sessionService,
+                agentRunner,
+                runExecutor,
+                objectMapper,
+                runIdSupplier,
+                weatherService,
+                clock,
+                // 短构造器（测试用）也走生产默认预算，保证测试与生产同一口径
+                new AgentContextPlanner(new AgentContextProperties()),
+                null);
+    }
+
+    /** 全量构造器：再注入上下文预算组装器与滚动摘要器（AgentRuntimeConfiguration 使用）。 */
+    public AgentRunService(
+            AgentSessionService sessionService,
+            AgentRunner agentRunner,
+            Executor runExecutor,
+            ObjectMapper objectMapper,
+            Supplier<String> runIdSupplier,
+            WeatherService weatherService,
+            Clock clock,
+            AgentContextPlanner contextPlanner,
+            AgentSessionSummarizer summarizer) {
         this.sessionService = sessionService;
         this.agentRunner = agentRunner;
         this.runExecutor = runExecutor;
@@ -116,6 +141,8 @@ public class AgentRunService {
         this.runIdSupplier = runIdSupplier;
         this.weatherService = weatherService;
         this.clock = clock == null ? Clock.systemUTC() : clock;
+        this.contextPlanner = contextPlanner;
+        this.summarizer = summarizer;
     }
 
     /**
@@ -142,8 +169,8 @@ public class AgentRunService {
             sessionService.appendMessage(uid, sessionId, AgentMessageRole.USER, promptText);
             // 先发 run_started（前端拿到 runId 后取消按钮才可用）
             emit(run, AgentSseEventType.RUN_STARTED, new RunStartedPayload(runId, sessionId));
-            // 历史消息转成 Spring AI Message，异步执行
-            List<Message> history = toHistory(aggregate.messages());
+            // 历史消息按预算组装（摘要 + 近期逐字窗口），异步执行
+            List<Message> history = contextPlanner.buildHistory(aggregate.session(), aggregate.messages());
             runExecutor.execute(() -> execute(run, command, promptText, history));
             return runId;
         } catch (RuntimeException exception) {
@@ -210,6 +237,11 @@ public class AgentRunService {
                     exception));
         } finally {
             remove(run);
+            // run 落幕（成功/失败都算）：尝试把超出近期窗口的旧消息滚动进持久化摘要。
+            // 摘要器未装配（如测试短构造器）时跳过；失败由摘要器内部消化，不影响本 run。
+            if (summarizer != null) {
+                summarizer.schedule(run.uid(), run.sessionId());
+            }
         }
     }
 
@@ -390,6 +422,11 @@ public class AgentRunService {
                     lastFlushNanos[0] = now;
                 }
             }
+
+            @Override
+            public void onContextNotice(String text) {
+                emit(run, AgentSseEventType.CONTEXT_NOTICE, new ContextNoticePayload(text));
+            }
         };
     }
 
@@ -410,19 +447,6 @@ public class AgentRunService {
                 type.wireName(),
                 json(payload));
         run.sink().emit(type, eventId, payload);
-    }
-
-    /** 把存储的聊天消息转成 Spring AI Message（作为模型的历史上下文）。 */
-    private List<Message> toHistory(List<AgentMessage> stored) {
-        List<Message> history = new ArrayList<>();
-        for (AgentMessage message : stored) {
-            if (message.getRole() == AgentMessageRole.USER) {
-                history.add(new UserMessage(message.getContent()));
-            } else if (message.getRole() == AgentMessageRole.ASSISTANT) {
-                history.add(new AssistantMessage(message.getContent()));
-            }
-        }
-        return List.copyOf(history);
     }
 
     /** 事件 payload 序列化为 JSON（落库用）。 */

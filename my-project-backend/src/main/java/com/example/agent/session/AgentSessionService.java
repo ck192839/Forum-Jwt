@@ -187,6 +187,22 @@ public class AgentSessionService {
     }
 
     /**
+     * 写入会话滚动摘要并推进覆盖点（后台摘要任务调用）。
+     * 带 uid 归属校验；写不进（会话已删/非本人）静默返回——摘要任务无业务后果。
+     * 故意不走 touchOwned：不更新 updated_at，避免后台任务把会话顶到列表最前。
+     */
+    @Transactional
+    public void updateContextSummary(int uid, long sessionId, String summary, long summarizedMessageId) {
+        sessionMapper.updateContextSummary(sessionId, uid, summary, summarizedMessageId);
+    }
+
+    /** 查询某条消息之后（id 更大）的全部消息（后台摘要任务读取，无需 uid 校验——调用方已校验归属）。 */
+    @Transactional(readOnly = true)
+    public List<AgentMessage> messagesAfter(long sessionId, long afterId) {
+        return messageMapper.selectBySessionIdAfterId(sessionId, afterId);
+    }
+
+    /**
      * 私有辅助：touch 会话（更新 updated_at）。\n
      * 返回 0 = 会话不存在或不属于该用户 → 抛 404；\n
      * 返回更新时间（供子记录统一使用同一时间戳）。

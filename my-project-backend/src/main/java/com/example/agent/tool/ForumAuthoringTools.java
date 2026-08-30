@@ -2,6 +2,7 @@ package com.example.agent.tool;
 
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
+import com.example.agent.context.TextTruncation;
 import com.example.agent.search.HybridTopicSearchService;
 import com.example.entity.dto.Topic;
 import com.example.entity.dto.TopicType;
@@ -30,20 +31,32 @@ import java.util.List;
  * - 标题/正文长度限制与论坛发帖规则一致（validate_draft 是最终防线）
  */
 public class ForumAuthoringTools {
+    // 正文截断标记（头尾保留、中间省略）
+    private static final String TRUNCATION_MARKER = "\n…[truncated]…\n";
+
     private final TopicTypeMapper topicTypeMapper; // 板块查询
     private final TopicMapper topicMapper; // 帖子查询（只读）
     private final HybridTopicSearchService searchService; // 混合检索
     private final ProhibitedUtils prohibitedUtils; // 违禁词检测
+    private final int excerptMaxChars; // 检索摘要返回上限（上下文治理：工具出口截断）
+    private final int readTopicMaxChars; // 读帖正文返回上限
 
     public ForumAuthoringTools(
             TopicTypeMapper topicTypeMapper,
             TopicMapper topicMapper,
             HybridTopicSearchService searchService,
-            ProhibitedUtils prohibitedUtils) {
+            ProhibitedUtils prohibitedUtils,
+            int excerptMaxChars,
+            int readTopicMaxChars) {
+        if (excerptMaxChars < 1 || readTopicMaxChars < 1) {
+            throw new IllegalArgumentException("truncation limits must be positive");
+        }
         this.topicTypeMapper = topicTypeMapper;
         this.topicMapper = topicMapper;
         this.searchService = searchService;
         this.prohibitedUtils = prohibitedUtils;
+        this.excerptMaxChars = excerptMaxChars;
+        this.readTopicMaxChars = readTopicMaxChars;
     }
 
     /**
@@ -69,7 +82,7 @@ public class ForumAuthoringTools {
                 .map(ranked -> new SimilarTopicToolResult(
                         ranked.topic().topicId(),
                         ranked.topic().title(),
-                        ranked.topic().excerpt(),
+                        truncate(ranked.topic().excerpt(), excerptMaxChars),
                         ranked.topic().topicTypeId(),
                         ranked.sources()))
                 .toList();
@@ -96,7 +109,7 @@ public class ForumAuthoringTools {
                 topic.getId(),
                 topic.getTitle(),
                 topic.getType(),
-                extractText(topic.getContent()));
+                truncateHeadAndTail(extractText(topic.getContent()), readTopicMaxChars));
     }
 
     /**
@@ -166,6 +179,16 @@ public class ForumAuthoringTools {
             throw new IllegalArgumentException(field + " length is invalid");
         }
         return value.trim();
+    }
+
+    /** 尾部截断：超长保留头部并以省略号结尾。用于检索摘要——模型只需判断相关性。 */
+    private String truncate(String text, int maxChars) {
+        return TextTruncation.truncateHead(text, maxChars, "…");
+    }
+
+    /** 头尾保留截断。用于读帖正文——帖子的开头与结尾往往都有信息量。 */
+    private String truncateHeadAndTail(String text, int maxChars) {
+        return TextTruncation.truncateHeadAndTail(text, maxChars, TRUNCATION_MARKER);
     }
 
     /** 长度校验：按 Unicode 码点计数（正确统计中文/emoji），null 视为不合法。 */

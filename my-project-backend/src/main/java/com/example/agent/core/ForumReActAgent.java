@@ -1,5 +1,7 @@
 package com.example.agent.core;
 
+import com.example.agent.context.ContextTokenEstimator;
+import com.example.agent.context.TextTruncation;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -56,6 +58,13 @@ import java.util.concurrent.TimeoutException;
 public final class ForumReActAgent implements AgentRunner {
     // 取消/超时检查的轮询间隔：每 50ms 检查一次 future 是否完成
     private static final long CANCELLATION_POLL_NANOS = TimeUnit.MILLISECONDS.toNanos(50);
+    // 工具预算耗尽后的引导语：强制模型不再调用工具、基于已有信息收敛终态
+    private static final String TOOL_BUDGET_GUIDANCE = """
+            The tool budget for this run is exhausted. Do NOT call any more tools. \
+            Based only on the information you have already gathered, immediately produce a terminal \
+            result now: an ANSWER with the citations you already have, a QUESTION if essential \
+            information is missing, or the DRAFT flow if a draft was requested.\
+            """;
     // 终端输出无效时的最大修复次数
     private static final int MAX_TERMINAL_REPAIR_ATTEMPTS = 2;
     // 修复提示：让模型重新输出严格 JSON（用于 AgentOutputValidationException 后的重试）
@@ -136,6 +145,10 @@ public final class ForumReActAgent implements AgentRunner {
     private final AgentTerminalResultParser resultParser; // 终态 JSON 严格解析器
     private final ExecutorService callExecutor; // 单次调用线程池（超时/取消用）
     private final int maxToolCalls; // 工具调用上限（默认 8）
+    private final int maxToolTokens; // run 内工具结果+参数累计 token 预算（默认 10000）
+    private final int maxUserMessageChars; // 当前用户请求的字符上限（头尾保留截断）
+    private final int readTopicMaxChars; // 读帖工具单次结果字符上界（最坏情况预估用）
+    private final int excerptMaxChars; // 检索摘要单条字符上界（最坏情况预估用）
     private final Duration timeout; // 总时间预算（默认 60s）
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -145,11 +158,11 @@ public final class ForumReActAgent implements AgentRunner {
             List<ToolCallback> toolCallbacks,
             AgentTerminalResultParser resultParser,
             ExecutorService callExecutor,
-            int maxToolCalls,
+            AgentRunBudgets budgets,
             Duration timeout) {
         // 构造期校验：非法参数直接失败（fail-fast）
-        if (maxToolCalls < 1) {
-            throw new IllegalArgumentException("maxToolCalls must be positive");
+        if (budgets == null) {
+            throw new IllegalArgumentException("budgets must not be null");
         }
         if (timeout == null || timeout.isZero() || timeout.isNegative()) {
             throw new IllegalArgumentException("timeout must be positive");
@@ -159,7 +172,11 @@ public final class ForumReActAgent implements AgentRunner {
         this.toolCallbacks = List.copyOf(toolCallbacks); // 防御性不可变拷贝
         this.resultParser = resultParser;
         this.callExecutor = callExecutor;
-        this.maxToolCalls = maxToolCalls;
+        this.maxToolCalls = budgets.maxToolCalls();
+        this.maxToolTokens = budgets.maxToolTokens();
+        this.maxUserMessageChars = budgets.maxUserMessageChars();
+        this.readTopicMaxChars = budgets.readTopicMaxChars();
+        this.excerptMaxChars = budgets.excerptMaxChars();
         this.timeout = timeout;
     }
 
@@ -199,16 +216,34 @@ public final class ForumReActAgent implements AgentRunner {
         Map<Integer, String> knownTopics = new LinkedHashMap<>(); // topicId → 标题（保持顺序）
         boolean draftValidationAttempted = false; // 本次运行是否调用过 validate_draft
         ValidatedDraft validatedDraft = null; // 最近一次校验通过的草稿内容
+        boolean contextDegraded = false; // 是否已触发过「上下文溢出降级重试」（每次 run 至多一次）
+        int toolTokensUsed = 0; // 本次 run 工具结果累计 token
+        boolean toolBudgetGuided = false; // 是否已发出「工具预算耗尽」引导（发出后仍调工具则硬失败）
 
         while (true) {
             Prompt currentPrompt = prompt;
             // 每个模型响应用一个新提取器：从流式 chunk 中增量解码可见文本（打字机效果）
             TerminalTextExtractor extractor = new TerminalTextExtractor();
             // 1. 调用模型（在预算内执行，超时/取消会在内部抛出）
-            ChatResponse response = executeWithinBudget(
-                    () -> invokeModel(currentPrompt, cancellation, extractor, observer),
-                    cancellation,
-                    deadline);
+            ChatResponse response;
+            try {
+                response = executeWithinBudget(
+                        () -> invokeModel(currentPrompt, cancellation, extractor, observer),
+                        cancellation,
+                        deadline);
+            } catch (AgentRunException exception) {
+                // 兜底降级：prompt 超出模型上下文窗口时，裁到最小可用上下文重试一次。
+                // 没有这一步，历史过长的老会话会永久卡死（每次 run 都必然溢出失败）。
+                if (!contextDegraded && isContextOverflow(exception)) {
+                    contextDegraded = true;
+                    observer.onContextNotice(
+                            "Earlier conversation exceeded the model window; the agent is answering "
+                                    + "without older history and may have lost earlier details.");
+                    prompt = new Prompt(degradedMessages(currentPrompt), options);
+                    continue;
+                }
+                throw exception;
+            }
             if (response == null || response.getResult() == null || response.getResult().getOutput() == null) {
                 throw new AgentRunException(AgentRunFailure.INVALID_RESPONSE, "Model returned no response");
             }
@@ -270,10 +305,24 @@ public final class ForumReActAgent implements AgentRunner {
                 }
             }
 
-            // 3. 模型要求调用工具：先做额度检查（本次请求的调用数 + 已用的 ≤ 上限）
+            // 3. 模型要求调用工具：先做预算检查（次数上限 + token 预算的最坏情况预检）
             int requestedCalls = output.getToolCalls().size();
-            if (toolCallCount + requestedCalls > maxToolCalls) {
-                throw new AgentRunException(AgentRunFailure.TOOL_LIMIT, "Agent exceeded the tool call limit");
+            boolean toolCountExceeded = toolCallCount + requestedCalls > maxToolCalls;
+            boolean toolTokenExceeded = toolTokensUsed + estimateRoundTokens(output) > maxToolTokens;
+            if (toolCountExceeded || toolTokenExceeded) {
+                // 预算耗尽 → 优雅降级：不执行工具，注入引导消息让模型基于已有信息收敛终态。
+                // 引导后仍要调用工具 → 硬失败（确定性终止，避免无限循环）。
+                if (toolBudgetGuided) {
+                    throw new AgentRunException(AgentRunFailure.TOOL_LIMIT, "Agent exceeded the tool call limit");
+                }
+                toolBudgetGuided = true;
+                observer.onContextNotice(
+                        "The tool budget for this run was exhausted; the agent will answer "
+                                + "with the information gathered so far.");
+                List<Message> guidedHistory = new ArrayList<>(currentPrompt.getInstructions());
+                guidedHistory.add(new UserMessage(TOOL_BUDGET_GUIDANCE));
+                prompt = new Prompt(guidedHistory, options);
+                continue;
             }
             // 通知观察者「工具开始」（前端显示时间线）
             output.getToolCalls().forEach(call -> observer.toolStarted(call.name(), call.arguments()));
@@ -290,6 +339,9 @@ public final class ForumReActAgent implements AgentRunner {
                     observer,
                     knownTopicIds,
                     knownTopics);
+            // 累计本次预算消耗：调用参数（如 validate_draft 的长草稿体）+ 实际结果。
+            // 只取最后一条工具响应消息，避免随历史重发重复计数。
+            toolTokensUsed += estimateArgsTokens(output) + lastToolResponseTokens(execution);
             if (validation.attempted()) {
                 draftValidationAttempted = true;
                 validatedDraft = validation.draft();
@@ -306,6 +358,8 @@ public final class ForumReActAgent implements AgentRunner {
     /**
      * 组装发送给模型的用户消息：环境上下文（时间/天气）在前、编辑器版本号居中、用户请求在后。
      * 上下文各字段都可缺省（旧请求或天气降级）。
+     * 用户请求本体做头尾保留截断：粘贴超长文本/编辑器长草稿若不设上限，
+     * 会直接撑爆模型窗口，且溢出降级保留的恰恰是这条消息，降级救不了——必须在出口截断。
      */
     private String requestMessage(AgentRunRequest request) {
         StringBuilder text = new StringBuilder();
@@ -319,7 +373,9 @@ public final class ForumReActAgent implements AgentRunner {
             }
         }
         text.append("Editor version: ").append(request.editorVersion()).append('\n');
-        text.append("User request:\n").append(request.userMessage());
+        text.append("User request:\n")
+                .append(TextTruncation.truncateHeadAndTail(
+                        request.userMessage(), maxUserMessageChars, TextTruncation.MIDDLE_MARKER));
         return text.toString();
     }
 
@@ -637,6 +693,105 @@ public final class ForumReActAgent implements AgentRunner {
             }
             throw new AgentRunException(AgentRunFailure.EXECUTION, "Model or tool execution failed", cause);
         }
+    }
+
+    /**
+     * 估算本轮工具调用的 token 消耗：各调用参数实际 token + 各工具结果的最坏情况预估。
+     * 结果大小在执行前不可知，只能按工具名取上界——否则一轮内多个 read_public_topic
+     * 的并行调用（每个结果最大 readTopicMaxChars 字）可以一次性冲垮预算。
+     */
+    private int estimateRoundTokens(AssistantMessage output) {
+        int tokens = 0;
+        for (AssistantMessage.ToolCall call : output.getToolCalls()) {
+            tokens += ContextTokenEstimator.estimateTokens(call.arguments());
+            tokens += worstCaseResultTokens(call.name());
+        }
+        return tokens;
+    }
+
+    /** 各工具调用参数的实际 token（如 validate_draft 的完整草稿体），执行后计入预算。 */
+    private int estimateArgsTokens(AssistantMessage output) {
+        int tokens = 0;
+        for (AssistantMessage.ToolCall call : output.getToolCalls()) {
+            tokens += ContextTokenEstimator.estimateTokens(call.arguments());
+        }
+        return tokens;
+    }
+
+    /** 按工具名估计单次结果的最大 token 量（与工具出口的截断上限对齐）。 */
+    private int worstCaseResultTokens(String toolName) {
+        if ("read_public_topic".equals(toolName)) {
+            return readTopicMaxChars; // 全中文最坏情况：1 字符 ≈ 1 token
+        }
+        if ("search_similar_topics".equals(toolName)) {
+            return excerptMaxChars * 6 + 200; // top6 条摘要 + 结构开销
+        }
+        return 200; // list_topic_types / validate_draft / 终态编码工具等小结果
+    }
+
+    /**
+     * 估算本轮新增工具结果的 token 量：每轮执行后对话历史末尾恰好新增一条
+     * ToolResponseMessage（包含本轮全部调用结果），只统计它，避免随历史重发重复计数。
+     */
+    private int lastToolResponseTokens(ToolExecutionResult execution) {
+        List<Message> history = execution.conversationHistory();
+        if (history.isEmpty()) {
+            return 0;
+        }
+        Message last = history.get(history.size() - 1);
+        if (!(last instanceof ToolResponseMessage toolResponse)) {
+            return 0;
+        }
+        int tokens = 0;
+        for (ToolResponseMessage.ToolResponse response : toolResponse.getResponses()) {
+            tokens += ContextTokenEstimator.estimateTokens(response.responseData());
+        }
+        return tokens;
+    }
+
+    /**
+     * 判断异常链是否为「上下文超长」类失败：
+     * 沿 cause 链匹配各提供商的溢出错误特征（DeepSeek/OpenAI 风格），
+     * 有限深度防止循环引用。命中才允许触发降级重试。
+     */
+    private boolean isContextOverflow(Throwable exception) {
+        Throwable current = exception;
+        for (int depth = 0; current != null && depth < 10; depth++) {
+            String text = current.getMessage() == null ? "" : current.getMessage().toLowerCase(Locale.ROOT);
+            if (text.contains("context_length_exceeded")
+                    || text.contains("context length")
+                    || text.contains("maximum context")
+                    || text.contains("prompt is too long")
+                    || text.contains("input length exceeds")
+                    || text.contains("too many input tokens")) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
+    }
+
+    /**
+     * 降级消息集：只保留系统提示（含摘要）与最后一条用户消息，
+     * 丢弃全部 assistant / tool 消息——不仅为了缩小体积，
+     * 还因为悬空的 tool_calls（assistant 带调用但无结果）本身就会让 API 拒绝请求。
+     */
+    private List<Message> degradedMessages(Prompt prompt) {
+        List<Message> instructions = prompt.getInstructions();
+        Message lastUserMessage = null;
+        for (int index = instructions.size() - 1; index >= 0; index--) {
+            if (instructions.get(index) instanceof UserMessage) {
+                lastUserMessage = instructions.get(index);
+                break;
+            }
+        }
+        List<Message> reduced = new ArrayList<>();
+        for (Message message : instructions) {
+            if (message instanceof SystemMessage || message == lastUserMessage) {
+                reduced.add(message);
+            }
+        }
+        return reduced;
     }
 
     /** 无 future 版本的活跃检查（用于动作开始前）。 */

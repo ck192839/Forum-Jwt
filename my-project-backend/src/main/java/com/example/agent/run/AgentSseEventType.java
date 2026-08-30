@@ -28,6 +28,7 @@ public enum AgentSseEventType {
     ANSWER("answer"),
     DRAFT_READY("draft_ready"),
     RUN_COMPLETED("run_completed"),
+    CONTEXT_NOTICE("context_notice"),
     ERROR("error");
 
     private final String wireName;

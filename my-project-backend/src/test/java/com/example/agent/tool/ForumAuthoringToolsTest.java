@@ -97,7 +97,9 @@ class ForumAuthoringToolsTest {
                 typeMapper,
                 mock(TopicMapper.class),
                 emptySearch(),
-                prohibited
+                prohibited,
+                200,
+                8000
         );
 
         DraftValidationToolResult invalid = tools.validateDraft("bad title", 3, "Body");
@@ -109,12 +111,51 @@ class ForumAuthoringToolsTest {
         assertEquals(List.of(), valid.errors());
     }
 
+    @Test
+    void truncatesLongSearchExcerptsAtTheConfiguredLimit() {
+        TopicSearchHit hit = new TopicSearchHit(42, "Guide", "字".repeat(500), 3);
+        HybridTopicSearchService search = new HybridTopicSearchService(query -> List.of(hit), query -> List.of());
+        // excerpt 上限故意设为 100：验证截断生效
+        ForumAuthoringTools tools = new ForumAuthoringTools(
+                mock(TopicTypeMapper.class), mock(TopicMapper.class), search,
+                mock(ProhibitedUtils.class), 100, 8000);
+
+        List<SimilarTopicToolResult> result = tools.searchSimilarTopics("query");
+
+        String excerpt = result.get(0).excerpt();
+        assertEquals(101, excerpt.codePointCount(0, excerpt.length())); // 100 字 + "…"
+        assertTrue(excerpt.endsWith("…"));
+    }
+
+    @Test
+    void truncatesLongTopicBodyKeepingHeadAndTail() {
+        TopicMapper topicMapper = mock(TopicMapper.class);
+        Topic topic = new Topic();
+        topic.setId(42);
+        topic.setType(3);
+        topic.setInvisible(0);
+        topic.setContent("{\"ops\":[{\"insert\":\"" + "头".repeat(300) + "中间" + "尾".repeat(300) + "\"}]}");
+        when(topicMapper.selectById(42)).thenReturn(topic);
+        // 正文上限 100：头 50 + 尾 50，中间截断
+        ForumAuthoringTools tools = new ForumAuthoringTools(
+                mock(TopicTypeMapper.class), topicMapper, emptySearch(),
+                mock(ProhibitedUtils.class), 200, 100);
+
+        PublicTopicToolResult result = tools.readPublicTopic(42);
+
+        String body = result.bodyText();
+        assertTrue(body.startsWith("头".repeat(50)));
+        assertTrue(body.endsWith("尾".repeat(50)));
+        assertTrue(body.contains("[truncated]"));
+        assertTrue(body.codePointCount(0, body.length()) < 120);
+    }
+
     private ForumAuthoringTools tools(
             TopicTypeMapper typeMapper,
             TopicMapper topicMapper,
             HybridTopicSearchService search
     ) {
-        return new ForumAuthoringTools(typeMapper, topicMapper, search, mock(ProhibitedUtils.class));
+        return new ForumAuthoringTools(typeMapper, topicMapper, search, mock(ProhibitedUtils.class), 200, 8000);
     }
 
     private HybridTopicSearchService emptySearch() {

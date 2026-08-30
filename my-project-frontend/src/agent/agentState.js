@@ -7,6 +7,7 @@ const EVENT_TYPES = new Set([
   'question',
   'answer',
   'draft_ready',
+  'context_notice',
   'run_completed',
   'error'
 ])
@@ -24,6 +25,8 @@ export function createAgentState() {
     question: null,
     editorContext: null,
     draft: null,
+    // 上下文治理告知（降级/预算耗尽等），按时间顺序展示在消息列表上方
+    notices: [],
     error: null
   }
 }
@@ -88,12 +91,19 @@ export function restoreAgentSession(state, detail) {
         state.editorContext = null
         break
       case 'run_started':
-        // 切回仍在运行的会话时，需要 runId 才能取消
+        // 切回仍在运行的会话时，需要 runId 才能取消；notice 按 run 归属，
+        // 重放到新一轮起点时清掉之前 run 的，只保留最后一轮的
         state.runId = event.payload?.runId ?? state.runId
         state.runStatus = 'running'
+        state.notices = []
         break
       case 'run_completed':
         state.runStatus = String(event.payload?.status || 'completed').toLowerCase()
+        break
+      case 'context_notice':
+        // 通知事件已落库：重放时还原，保证切回会话后仍可见；
+        // 优先用落库时间，恢复后才能看出是哪一轮触发的
+        state.notices.push({ text: event.payload?.text || '', at: event.createdAt || new Date().toISOString() })
         break
       default:
         break
@@ -131,6 +141,8 @@ export function applyAgentEvent(state, event) {
       state.question = null
       state.draft = null
       state.error = null
+      // notice 属于单次 run（降级/预算耗尽只对当轮有意义），新 run 开始即清空
+      state.notices = []
       break
     case 'message_delta':
       state.streamingText += payload.text || ''
@@ -209,6 +221,10 @@ export function applyAgentEvent(state, event) {
       state.editorContext = payload.targetEditorId
         ? { editorId: payload.targetEditorId, editorVersion: payload.basedOnEditorVersion }
         : null
+      break
+    case 'context_notice':
+      // 上下文治理告知：事件已落库，会话恢复重放时也会经过这里（落库事件带 createdAt）
+      state.notices.push({ text: payload.text || '', at: event.createdAt || new Date().toISOString() })
       break
     case 'run_completed':
       state.runStatus = String(payload.status || 'completed').toLowerCase()

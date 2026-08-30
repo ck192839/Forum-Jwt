@@ -50,6 +50,45 @@ class AgentSessionServiceTest {
     }
 
     @Test
+    void writesContextSummaryWithoutTouchingSessionRecency() {
+        AgentSessionMapper sessionMapper = mock(AgentSessionMapper.class);
+        AgentSessionService service = new AgentSessionService(
+                sessionMapper,
+                mock(AgentMessageMapper.class),
+                mock(AgentEventMapper.class),
+                mock(AgentDraftMapper.class),
+                Clock.fixed(Instant.parse("2026-08-04T12:00:00Z"), ZoneOffset.UTC));
+
+        service.updateContextSummary(7, 99L, "compressed summary", 42L);
+
+        verify(sessionMapper).updateContextSummary(99L, 7, "compressed summary", 42L);
+        // 后台摘要不 touch 会话：updated_at 不应被推进（否则会话会被顶到列表最前）
+        verify(sessionMapper, never()).touchOwnedById(anyLong(), anyInt(), any(Timestamp.class));
+    }
+
+    @Test
+    void readsMessagesAfterTheSummaryCoveragePoint() {
+        AgentMessageMapper messageMapper = mock(AgentMessageMapper.class);
+        AgentMessage recent = new AgentMessage();
+        recent.setId(41L);
+        recent.setSessionId(99L);
+        recent.setRole(AgentMessageRole.USER);
+        recent.setContent("recent");
+        when(messageMapper.selectBySessionIdAfterId(99L, 40L)).thenReturn(List.of(recent));
+        AgentSessionService service = new AgentSessionService(
+                mock(AgentSessionMapper.class),
+                messageMapper,
+                mock(AgentEventMapper.class),
+                mock(AgentDraftMapper.class),
+                Clock.fixed(Instant.parse("2026-08-04T12:00:00Z"), ZoneOffset.UTC));
+
+        List<AgentMessage> result = service.messagesAfter(99L, 40L);
+
+        assertEquals(1, result.size());
+        assertEquals("recent", result.get(0).getContent());
+    }
+
+    @Test
     void listsAtMostTenNonExpiredSessionsNewestFirst() {
         AgentSessionMapper sessionMapper = mock(AgentSessionMapper.class);
         AgentSession newest = new AgentSession();

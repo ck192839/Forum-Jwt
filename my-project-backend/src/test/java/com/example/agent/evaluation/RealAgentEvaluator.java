@@ -9,6 +9,7 @@ import com.example.agent.core.AgentRunObserver;
 import com.example.agent.core.AgentRunRequest;
 import com.example.agent.core.AgentTerminalResult;
 import com.example.agent.core.AgentTerminalResultParser;
+import com.example.agent.core.AgentRunBudgets;
 import com.example.agent.core.ForumReActAgent;
 import com.example.agent.config.AgentRuntimeProperties;
 import com.example.agent.tool.ForumAuthoringTools;
@@ -152,7 +153,7 @@ final class RealAgentEvaluator {
                     List.of(callbacks),
                     new AgentTerminalResultParser(objectMapper),
                     executor,
-                    maxToolCalls,
+                    new AgentRunBudgets(maxToolCalls, 12_000, 6_000, 8_000, 200),
                     timeout
             );
             AgentTerminalResult result = agent.run(

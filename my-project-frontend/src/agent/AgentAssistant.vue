@@ -114,6 +114,18 @@ function sessionLabel(session) {
   return session.status === 'ACTIVE' ? `${date} · 进行中` : date
 }
 
+// 告知显示到分（恢复历史会话时可能带出非当天的旧告知，故带上日期）
+function formatNoticeTime(at) {
+  const date = new Date(at)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleString('zh-CN', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  })
+}
+
 function submitOnShortcut(event) {
   if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && canSend.value) {
     event.preventDefault()
@@ -197,6 +209,22 @@ async function resetAndNewSession() {
             <div v-if="!state.messages.length && !state.streamingText" class="empty-state">
               问我论坛内容相关的问题，或描述你准备发布的内容
             </div>
+
+            <!-- 上下文治理告知：run 内触发降级（上下文裁剪/工具预算耗尽）时后端推送，
+                 按 run 生命周期展示（新 run 开始即清空），带触发时间便于区分新旧 -->
+            <el-alert
+              v-for="(notice, index) in state.notices"
+              :key="`${notice.at}-${index}`"
+              type="warning"
+              :closable="true"
+              class="context-notice"
+              @close="state.notices.splice(index, 1)"
+            >
+              <template #title>
+                <span class="context-notice-text">{{ notice.text }}</span>
+                <time class="context-notice-time">{{ formatNoticeTime(notice.at) }}</time>
+              </template>
+            </el-alert>
 
             <div v-for="(message, index) in visibleMessages" :key="message.id || index"
                  :class="['message', message.role.toLowerCase()]">
@@ -440,6 +468,28 @@ async function resetAndNewSession() {
 }
 
 .message.question { border-left: 3px solid #d97706; }
+
+.context-notice {
+  margin-bottom: 10px;
+}
+
+.context-notice :deep(.el-alert__title) {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.context-notice-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.context-notice-time {
+  flex: 0 0 auto;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
 
 .tool-timeline {
   margin: 12px 0;

@@ -179,7 +179,9 @@ class RealAgentEvaluatorTest {
                 typeMapper,
                 mock(TopicMapper.class),
                 new HybridTopicSearchService(query -> List.of(), query -> List.of()),
-                mock(ProhibitedUtils.class)
+                mock(ProhibitedUtils.class),
+                200,
+                8000
         );
     }
 }

@@ -182,6 +182,78 @@ describe('agent state', () => {
     expect(state.citations).toHaveLength(0)
   })
 
+  test('records context notices and replays them on session restore', () => {
+    const state = createAgentState()
+
+    applyAgentEvent(state, {
+      type: 'context_notice',
+      payload: { text: 'The tool budget for this run was exhausted.' }
+    })
+
+    expect(state.notices).toHaveLength(1)
+    expect(state.notices[0].text).toBe('The tool budget for this run was exhausted.')
+    expect(typeof state.notices[0].at).toBe('string')
+
+    // 通知事件已落库：会话恢复重放时通知还原，并保留落库的触发时间
+    const restored = createAgentState()
+    restoreAgentSession(restored, {
+      session: { id: 9, status: 'ACTIVE' },
+      messages: [],
+      events: [
+        { id: 1, runId: 'r1', sequence: 1, type: 'context_notice', payload: { text: '旧上下文已被裁剪' }, createdAt: '2026-08-29T10:30:00Z' }
+      ],
+      draft: null
+    })
+    expect(restored.notices).toHaveLength(1)
+    expect(restored.notices[0].text).toBe('旧上下文已被裁剪')
+    expect(restored.notices[0].at).toBe('2026-08-29T10:30:00Z')
+  })
+
+  test('clears notices when a new run starts', () => {
+    const state = createAgentState()
+
+    applyAgentEvent(state, {
+      type: 'run_started',
+      payload: { runId: 'r1', sessionId: 9 }
+    })
+    applyAgentEvent(state, { type: 'context_notice', payload: { text: '上下文已被裁剪' } })
+    expect(state.notices).toHaveLength(1)
+
+    applyAgentEvent(state, {
+      type: 'run_started',
+      payload: { runId: 'r2', sessionId: 9 }
+    })
+    expect(state.notices).toHaveLength(0)
+  })
+
+  test('keeps only the last run\'s notices when restoring a session', () => {
+    const state = createAgentState()
+
+    restoreAgentSession(state, {
+      session: { id: 9, status: 'ACTIVE' },
+      messages: [
+        { id: 1, role: 'USER', content: '第一问', createdAt: '2026-08-30T01:00:00Z' },
+        { id: 2, role: 'ASSISTANT', content: '第一答', createdAt: '2026-08-30T01:00:05Z' },
+        { id: 3, role: 'USER', content: '第二问', createdAt: '2026-08-30T01:01:00Z' },
+        { id: 4, role: 'ASSISTANT', content: '第二答', createdAt: '2026-08-30T01:01:05Z' }
+      ],
+      events: [
+        { id: 1, runId: 'r1', sequence: 1, type: 'run_started', payload: { runId: 'r1' }, createdAt: '2026-08-30T01:00:00Z' },
+        { id: 2, runId: 'r1', sequence: 2, type: 'context_notice', payload: { text: '第一轮预算耗尽' }, createdAt: '2026-08-30T01:00:03Z' },
+        { id: 3, runId: 'r1', sequence: 3, type: 'answer', payload: { answer: '第一答' }, createdAt: '2026-08-30T01:00:05Z' },
+        { id: 4, runId: 'r2', sequence: 1, type: 'run_started', payload: { runId: 'r2' }, createdAt: '2026-08-30T01:01:00Z' },
+        { id: 5, runId: 'r2', sequence: 2, type: 'context_notice', payload: { text: '第二轮上下文裁剪' }, createdAt: '2026-08-30T01:01:03Z' },
+        { id: 6, runId: 'r2', sequence: 3, type: 'answer', payload: { answer: '第二答' }, createdAt: '2026-08-30T01:01:05Z' }
+      ],
+      draft: null
+    })
+
+    // 重放按时间归并：新一轮 run_started 清掉上一轮的 notice，只留最后一轮的
+    expect(state.notices).toHaveLength(1)
+    expect(state.notices[0].text).toBe('第二轮上下文裁剪')
+    expect(state.notices[0].at).toBe('2026-08-30T01:01:03Z')
+  })
+
   test('records retryable errors and rejects unknown event types', () => {    const state = createAgentState()
 
     applyAgentEvent(state, {

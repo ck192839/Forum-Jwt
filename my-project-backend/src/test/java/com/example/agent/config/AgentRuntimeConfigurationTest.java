@@ -2,6 +2,7 @@ package com.example.agent.config;
 
 import com.example.agent.core.AgentTerminalResultParser;
 import com.example.agent.core.ForumReActAgent;
+import com.example.agent.context.AgentContextProperties;
 import com.example.agent.run.AgentRunService;
 import com.example.agent.search.HybridTopicSearchService;
 import com.example.agent.tool.ForumAuthoringTools;
@@ -43,7 +44,8 @@ class AgentRuntimeConfigurationTest {
                 mock(TopicTypeMapper.class),
                 mock(TopicMapper.class),
                 mock(HybridTopicSearchService.class),
-                mock(ProhibitedUtils.class)
+                mock(ProhibitedUtils.class),
+                new AgentContextProperties()
         );
 
         ForumToolCallbacks callbacks = configuration.forumToolCallbacks(tools);
@@ -66,6 +68,7 @@ class AgentRuntimeConfigurationTest {
         ObjectMapper objectMapper = new ObjectMapper();
         ExecutorService callExecutor = configuration.agentCallExecutor(properties);
         ExecutorService runExecutor = configuration.agentRunExecutor(properties);
+        ExecutorService summarizeExecutor = java.util.concurrent.Executors.newSingleThreadExecutor();
         try {
             AgentTerminalResultParser parser = configuration.agentTerminalResultParser(objectMapper);
             ForumReActAgent agent = configuration.forumReActAgent(
@@ -74,7 +77,8 @@ class AgentRuntimeConfigurationTest {
                     new ForumToolCallbacks(java.util.List.of()),
                     parser,
                     callExecutor,
-                    properties
+                    properties,
+                    new AgentContextProperties()
             );
             AgentRunService runs = configuration.agentRunService(
                     mock(AgentSessionService.class),
@@ -82,7 +86,14 @@ class AgentRuntimeConfigurationTest {
                     runExecutor,
                     objectMapper,
                     mock(com.example.service.WeatherService.class),
-                    java.time.Clock.systemUTC()
+                    java.time.Clock.systemUTC(),
+                    configuration.agentContextPlanner(new AgentContextProperties()),
+                    configuration.agentSessionSummarizer(
+                            mock(com.example.agent.session.AgentSessionMapper.class),
+                            mock(AgentSessionService.class),
+                            mock(ChatModel.class),
+                            summarizeExecutor,
+                            new AgentContextProperties())
             );
 
             assertNotNull(agent);
@@ -90,6 +101,7 @@ class AgentRuntimeConfigurationTest {
         } finally {
             callExecutor.shutdownNow();
             runExecutor.shutdownNow();
+            summarizeExecutor.shutdownNow();
         }
     }
 }

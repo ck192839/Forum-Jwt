@@ -20,4 +20,15 @@ public interface AgentMessageMapper extends BaseMapper<AgentMessage> {
             ORDER BY id ASC
             """)
     List<AgentMessage> selectBySessionIdOrdered(@Param("sessionId") long sessionId);
+
+    /** 查询某条消息之后（id 更大）的全部消息（摘要任务与 prompt 组装用）。 */
+    @Select("""
+            SELECT id, session_id, role, content, created_at
+            FROM agent_message
+            WHERE session_id = #{sessionId} AND id > #{afterId}
+            ORDER BY id ASC
+            """)
+    List<AgentMessage> selectBySessionIdAfterId(
+            @Param("sessionId") long sessionId,
+            @Param("afterId") long afterId);
 }

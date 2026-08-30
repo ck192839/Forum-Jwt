@@ -4,6 +4,7 @@ import com.example.agent.core.AgentCitation;
 import com.example.agent.run.AgentSseEventType;
 import com.example.agent.run.AnswerPayload;
 import com.example.agent.run.CitationPayload;
+import com.example.agent.run.ContextNoticePayload;
 import com.example.agent.run.DraftReadyPayload;
 import com.example.agent.run.ErrorPayload;
 import com.example.agent.run.MessageDeltaPayload;
@@ -122,6 +123,7 @@ final class AgentDtoMapper {
             case ANSWER -> AnswerPayload.class;
             case DRAFT_READY -> DraftReadyPayload.class;
             case RUN_COMPLETED -> RunCompletedPayload.class;
+            case CONTEXT_NOTICE -> ContextNoticePayload.class;
             case ERROR -> ErrorPayload.class;
         };
     }

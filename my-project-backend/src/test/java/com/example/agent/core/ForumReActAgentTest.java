@@ -11,8 +11,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
+import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
@@ -116,8 +118,217 @@ class ForumReActAgentTest {
         }
 
         @Test
-        void treatsAToolEncodedQuestionAsATerminalResult() {
-                ChatModel model = prompt -> toolCall(
+        void degradesToMinimalContextAndRetriesOnceOnContextOverflow() {
+                List<Prompt> capturedPrompts = new ArrayList<>();
+                AtomicInteger calls = new AtomicInteger();
+                ChatModel model = prompt -> {
+                        capturedPrompts.add(prompt);
+                        if (calls.incrementAndGet() == 1) {
+                                // 第一次调用：模拟 DeepSeek 上下文超长（错误信息在 cause 链里）
+                                throw new RuntimeException(
+                                                new IllegalStateException("This model's maximum context length is 4096 tokens"));
+                        }
+                        return response("{\"type\":\"QUESTION\",\"question\":\"Recovered\"}");
+                };
+                // 历史：早期问答 + 当前追问 → 正常 prompt 应为 系统 + 3 条历史 + 请求
+                List<Message> history = List.of(
+                                new UserMessage("earlier question"),
+                                new AssistantMessage("earlier answer"),
+                                new UserMessage("Follow-up question"));
+                RecordingObserver observer = new RecordingObserver();
+                ForumReActAgent agent = agent(model, emptyTools(), 8, Duration.ofSeconds(2));
+
+                AgentQuestionResult result = assertInstanceOf(AgentQuestionResult.class, agent.run(
+                                new AgentRunRequest("Follow-up question", 3, history),
+                                new AgentCancellationToken(),
+                                observer));
+
+                assertEquals("Recovered", result.question());
+                assertEquals(2, calls.get()); // 只重试一次
+                assertEquals(5, capturedPrompts.get(0).getInstructions().size());
+                // 降级后只保留 SystemMessage + 最后一条用户消息（assistant/tool 消息全部丢弃）
+                List<Message> degraded = capturedPrompts.get(1).getInstructions();
+                assertEquals(2, degraded.size());
+                assertInstanceOf(SystemMessage.class, degraded.get(0));
+                assertInstanceOf(UserMessage.class, degraded.get(1));
+                assertTrue(((UserMessage) degraded.get(1)).getText().contains("Follow-up question"));
+        }
+
+        @Test
+        void guidesTerminalResultInsteadOfFailingWhenToolCallLimitReached() {
+                List<Prompt> capturedPrompts = new ArrayList<>();
+                AtomicInteger round = new AtomicInteger();
+                ChatModel model = prompt -> {
+                        capturedPrompts.add(prompt);
+                        if (round.incrementAndGet() == 1) {
+                                // 第 1 轮：调用工具（消耗掉 maxToolCalls=1 的额度）
+                                return toolCall("call-1", "search_similar_topics", "{\"query\":\"x\"}");
+                        }
+                        if (round.get() == 2) {
+                                // 第 2 轮：模型无视额度仍要调用工具 → 应触发引导而非失败
+                                return toolCall("call-2", "search_similar_topics", "{\"query\":\"y\"}");
+                        }
+                        return response("{\"type\":\"QUESTION\",\"question\":\"Best effort\"}");
+                };
+                RecordingObserver observer = new RecordingObserver();
+                ForumReActAgent agent = agent(model, emptyTools(), 1, Duration.ofSeconds(5));
+
+                AgentQuestionResult result = assertInstanceOf(AgentQuestionResult.class, agent.run(
+                                new AgentRunRequest("q", 3, List.of()),
+                                new AgentCancellationToken(),
+                                observer));
+
+                assertEquals("Best effort", result.question());
+                assertEquals(3, round.get()); // 引导后模型收敛终态，run 未失败
+                // 引导 prompt（第 3 次模型调用）的末尾是引导 UserMessage，且未执行的 tool_call assistant 消息被丢弃
+                List<Message> guided = capturedPrompts.get(2).getInstructions();
+                assertInstanceOf(UserMessage.class, guided.get(guided.size() - 1));
+                assertTrue(((UserMessage) guided.get(guided.size() - 1)).getText().contains("tool budget"));
+                // 第 1 轮已执行的调用（与 ToolResponse 配对）保留；未执行的第 2 次调用（call-2）不得出现
+                assertTrue(guided.stream()
+                                .filter(AssistantMessage.class::isInstance)
+                                .map(AssistantMessage.class::cast)
+                                .flatMap(message -> message.getToolCalls() == null
+                                                ? java.util.stream.Stream.<AssistantMessage.ToolCall>empty()
+                                                : message.getToolCalls().stream())
+                                .noneMatch(call -> "call-2".equals(call.id())));
+        }
+
+        @Test
+        void guidesTerminalResultWhenToolTokenBudgetExhausted() {
+                AtomicInteger round = new AtomicInteger();
+                ChatModel model = prompt -> {
+                        // 第 1 轮：最坏情况预检（参数 + 结果上界）即超过 maxToolTokens=1 → 直接引导
+                        if (round.incrementAndGet() == 1) {
+                                return toolCall("call-1", "search_similar_topics", "{\"query\":\"x\"}");
+                        }
+                        return response("{\"type\":\"QUESTION\",\"question\":\"Recovered\"}");
+                };
+                RecordingObserver observer = new RecordingObserver();
+                ForumReActAgent agent = agent(
+                                model, toolsReturningTopic(42), ToolCallingManager.builder().build(),
+                                8, 1, Duration.ofSeconds(5));
+
+                AgentQuestionResult result = assertInstanceOf(AgentQuestionResult.class, agent.run(
+                                new AgentRunRequest("q", 3, List.of()),
+                                new AgentCancellationToken(),
+                                observer));
+
+                assertEquals("Recovered", result.question());
+                assertEquals(2, round.get());
+                assertEquals(0, observer.completed.size()); // 预检拦截，工具从未执行
+        }
+
+        @Test
+        void failsHardWhenModelStillCallsToolsAfterBudgetGuidance() {
+                Deque<ChatResponse> responses = new ArrayDeque<>();
+                responses.add(toolCall("call-1", "search_similar_topics", "{\"query\":\"a\"}"));
+                responses.add(toolCall("call-2", "search_similar_topics", "{\"query\":\"b\"}"));
+                responses.add(toolCall("call-3", "search_similar_topics", "{\"query\":\"c\"}"));
+                ForumReActAgent agent = agent(
+                                prompt -> responses.removeFirst(), emptyTools(), 1, Duration.ofSeconds(5));
+
+                AgentRunException exception = assertThrows(AgentRunException.class, () -> agent.run(
+                                new AgentRunRequest("q", 3, List.of()),
+                                new AgentCancellationToken(),
+                                new RecordingObserver()));
+
+                assertEquals(AgentRunFailure.TOOL_LIMIT, exception.failure());
+        }
+
+        @Test
+        void truncatesOverlongUserRequestKeepingHeadAndTail() {
+                List<Prompt> capturedPrompts = new ArrayList<>();
+                ChatModel model = prompt -> {
+                        capturedPrompts.add(prompt);
+                        return response("{\"type\":\"QUESTION\",\"question\":\"ok\"}");
+                };
+                // 用户请求上限设为 100 字：超长请求应在出口截断
+                ForumReActAgent agent = agent(
+                                model, emptyTools(), ToolCallingManager.builder().build(),
+                                new AgentRunBudgets(8, 12_000, 100, 8_000, 200),
+                                Duration.ofSeconds(2));
+
+                agent.run(
+                                new AgentRunRequest("字".repeat(500), 1, List.of()),
+                                new AgentCancellationToken(),
+                                AgentRunObserver.NOOP);
+
+                // 最后一条 UserMessage 是被截断后的用户请求（含环境上下文前缀）
+                String userText = capturedPrompts.get(0).getInstructions().stream()
+                                .filter(UserMessage.class::isInstance)
+                                .map(UserMessage.class::cast)
+                                .reduce((first, second) -> second)
+                                .orElseThrow()
+                                .getText();
+                // 消息结构：环境上下文/编辑器版本前缀 + 头 50 字 + 截断标记 + 尾 50 字
+                assertTrue(userText.contains("字".repeat(50) + "\n…[truncated]…\n" + "字".repeat(50)));
+                assertTrue(userText.codePointCount(0, userText.length()) < 200);
+        }
+
+        @Test
+        void guidesTerminalResultWhenSingleRoundToolsExceedTokenBudget() {
+                AtomicInteger round = new AtomicInteger();
+                List<Prompt> capturedPrompts = new ArrayList<>();
+                ChatModel model = prompt -> {
+                        capturedPrompts.add(prompt);
+                        if (round.incrementAndGet() == 1) {
+                                // 一轮内并行请求两个工具调用：最坏情况预检应直接拦截
+                                AssistantMessage message = AssistantMessage.builder()
+                                                .content("")
+                                                .toolCalls(List.of(
+                                                                new AssistantMessage.ToolCall("call-1", "function",
+                                                                                "read_public_topic", "{\"topicId\":42}"),
+                                                                new AssistantMessage.ToolCall("call-2", "function",
+                                                                                "read_public_topic", "{\"topicId\":43}")))
+                                                .build();
+                                return new ChatResponse(List.of(new Generation(message)));
+                        }
+                        return response("{\"type\":\"QUESTION\",\"question\":\"Answered without tools\"}");
+                };
+                RecordingObserver observer = new RecordingObserver();
+                ForumReActAgent agent = agent(
+                                model, emptyTools(), ToolCallingManager.builder().build(),
+                                new AgentRunBudgets(8, 1_000, 6_000, 8_000, 200),
+                                Duration.ofSeconds(5));
+
+                AgentQuestionResult result = assertInstanceOf(AgentQuestionResult.class, agent.run(
+                                new AgentRunRequest("q", 3, List.of()),
+                                new AgentCancellationToken(),
+                                observer));
+
+                // 两个 read 的最坏预估（2×8000+参数）远超 1000 token 预算 → 未执行任何工具
+                assertEquals("Answered without tools", result.question());
+                assertEquals(0, observer.completed.size());
+                assertTrue(((UserMessage) capturedPrompts.get(1).getInstructions()
+                                .get(capturedPrompts.get(1).getInstructions().size() - 1))
+                                .getText().contains("tool budget"));
+        }
+
+        @Test
+        void degradesRetryAlsoRecognizesAlternativeOverflowWording() {
+                List<Prompt> capturedPrompts = new ArrayList<>();
+                AtomicInteger calls = new AtomicInteger();
+                ChatModel model = prompt -> {
+                        capturedPrompts.add(prompt);
+                        if (calls.incrementAndGet() == 1) {
+                                throw new RuntimeException("prompt is too long: 90000 tokens > 65536 maximum");
+                        }
+                        return response("{\"type\":\"QUESTION\",\"question\":\"ok\"}");
+                };
+                ForumReActAgent agent = agent(model, emptyTools(), 8, Duration.ofSeconds(2));
+
+                AgentQuestionResult result = assertInstanceOf(AgentQuestionResult.class, agent.run(
+                                new AgentRunRequest("q", 3, List.of()),
+                                new AgentCancellationToken(),
+                                AgentRunObserver.NOOP));
+
+                assertEquals("ok", result.question());
+                assertEquals(2, calls.get());
+        }
+
+        @Test
+        void treatsAToolEncodedQuestionAsATerminalResult() {                ChatModel model = prompt -> toolCall(
                                 "call-question",
                                 "QUESTION",
                                 "{\"question\":\"What time and location should be used?\"}");
@@ -398,25 +609,27 @@ class ForumReActAgentTest {
                 assertEquals(AgentRunFailure.INVALID_RESPONSE, exception.failure());
         }
 
-        @Test
-        void rejectsMoreThanEightToolCalls() {
-                AtomicInteger modelCalls = new AtomicInteger();
-                ChatModel model = prompt -> {
-                        int call = modelCalls.incrementAndGet();
-                        return toolCall("call-" + call, "list_topic_types", "{}");
-                };
-                RecordingObserver observer = new RecordingObserver();
-                ForumReActAgent agent = agent(model, emptyTools(), 8, Duration.ofSeconds(5));
+    @Test
+    void rejectsMoreThanEightToolCalls() {
+            AtomicInteger modelCalls = new AtomicInteger();
+            ChatModel model = prompt -> {
+                    int call = modelCalls.incrementAndGet();
+                    return toolCall("call-" + call, "list_topic_types", "{}");
+            };
+            RecordingObserver observer = new RecordingObserver();
+            ForumReActAgent agent = agent(model, emptyTools(), 8, Duration.ofSeconds(5));
 
-                AgentRunException exception = assertThrows(AgentRunException.class, () -> agent.run(
-                                new AgentRunRequest("Write", 1, List.of()),
-                                new AgentCancellationToken(),
-                                observer));
+            AgentRunException exception = assertThrows(AgentRunException.class, () -> agent.run(
+                            new AgentRunRequest("Write", 1, List.of()),
+                            new AgentCancellationToken(),
+                            observer));
 
-                assertEquals(AgentRunFailure.TOOL_LIMIT, exception.failure());
-                assertEquals(9, modelCalls.get());
-                assertEquals(8, observer.completed.size());
-        }
+            // 第 9 次调用先触发「预算耗尽」引导（不再执行工具），模型（本测试的桩）仍要调用
+            // → 第 10 次模型调用时硬失败。已执行的工具次数仍是 8。
+            assertEquals(AgentRunFailure.TOOL_LIMIT, exception.failure());
+            assertEquals(10, modelCalls.get());
+            assertEquals(8, observer.completed.size());
+    }
 
         @Test
         void enforcesHardExecutionTimeout() {
@@ -549,6 +762,7 @@ class ForumReActAgentTest {
                                 tools,
                                 ToolCallingManager.builder().build(),
                                 maxToolCalls,
+                                12_000,
                                 timeout);
         }
 
@@ -557,6 +771,25 @@ class ForumReActAgentTest {
                         ForumAuthoringTools tools,
                         ToolCallingManager toolCallingManager,
                         int maxToolCalls,
+                        Duration timeout) {
+                return agent(model, tools, toolCallingManager, maxToolCalls, 12_000, timeout);
+        }
+
+        private ForumReActAgent agent(
+                        ChatModel model,
+                        ForumAuthoringTools tools,
+                        ToolCallingManager toolCallingManager,
+                        int maxToolCalls,
+                        int maxToolTokens,
+                        Duration timeout) {
+                return agent(model, tools, toolCallingManager, budgets(maxToolCalls, maxToolTokens), timeout);
+        }
+
+        private ForumReActAgent agent(
+                        ChatModel model,
+                        ForumAuthoringTools tools,
+                        ToolCallingManager toolCallingManager,
+                        AgentRunBudgets budgets,
                         Duration timeout) {
                 ToolCallback[] callbacks = MethodToolCallbackProvider.builder()
                                 .toolObjects(tools)
@@ -568,8 +801,13 @@ class ForumReActAgentTest {
                                 List.of(callbacks),
                                 new AgentTerminalResultParser(new ObjectMapper()),
                                 executor(),
-                                maxToolCalls,
+                                budgets,
                                 timeout);
+        }
+
+        /** 默认预算：用户请求 6000 字 / 读帖 8000 字 / 摘要 200 字（与生产默认一致）。 */
+        private AgentRunBudgets budgets(int maxToolCalls, int maxToolTokens) {
+                return new AgentRunBudgets(maxToolCalls, maxToolTokens, 6_000, 8_000, 200);
         }
 
         private ForumAuthoringTools emptyTools() {
@@ -579,7 +817,9 @@ class ForumReActAgentTest {
                                 typeMapper,
                                 mock(TopicMapper.class),
                                 new HybridTopicSearchService(query -> List.of(), query -> List.of()),
-                                mock(ProhibitedUtils.class));
+                                mock(ProhibitedUtils.class),
+                                200,
+                                8000);
         }
 
         private ForumAuthoringTools toolsReturningTopic(int topicId) {
@@ -590,7 +830,9 @@ class ForumReActAgentTest {
                                 typeMapper,
                                 mock(TopicMapper.class),
                                 new HybridTopicSearchService(query -> List.of(hit), query -> List.of(hit)),
-                                mock(ProhibitedUtils.class));
+                                mock(ProhibitedUtils.class),
+                                200,
+                                8000);
         }
 
         private ExecutorService executor() {

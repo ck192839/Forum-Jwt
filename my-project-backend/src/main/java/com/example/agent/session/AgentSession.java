@@ -25,4 +25,6 @@ public class AgentSession {
     private Timestamp createdAt; // 创建时间
     private Timestamp updatedAt; // 最后活动时间（列表按此排序）
     private Timestamp expiresAt; // 过期时间
+    private String contextSummary; // 旧消息的滚动摘要（null 表示尚无摘要）
+    private Long summarizedMessageId; // 摘要覆盖到的最后一条消息 id（0 = 尚未覆盖）
 }

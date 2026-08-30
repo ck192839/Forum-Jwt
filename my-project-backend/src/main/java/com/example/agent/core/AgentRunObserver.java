@@ -29,4 +29,11 @@ public interface AgentRunObserver {
      */
     default void onModelDelta(String text) {
     }
+
+    /**
+     * 上下文治理告知：Agent 在 run 内触发了降级（如上下文溢出裁剪、工具预算耗尽），
+     * 回答完整性可能受影响。由调用方转成 context_notice SSE 事件告知用户。
+     */
+    default void onContextNotice(String text) {
+    }
 }

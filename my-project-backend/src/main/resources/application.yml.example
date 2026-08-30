@@ -87,3 +87,17 @@ spring:
       origin: '*'
       credentials: false
       methods: '*'
+
+# Agent 上下文治理（默认值即下述值，可不配置）
+agent:
+  context:
+    max-context-tokens: 38000    # prompt 历史+摘要部分的 token 预算（DeepSeek 64k 窗口留余量）
+    recent-window-messages: 20   # 逐字保留的最近消息条数
+    summary-max-chars: 4000      # 滚动摘要最大字符数
+    summarize-margin-messages: 4 # 可摘要旧消息数超过该余量才触发摘要
+    summarize-timeout: 30s       # 单次摘要 LLM 调用超时
+    excerpt-max-chars: 200       # search_similar_topics 返回摘要的截断长度
+    read-topic-max-chars: 8000   # read_public_topic 返回正文的截断长度
+    max-tool-tokens: 10000       # 单次 run 工具结果+参数累计 token 预算（执行前最坏情况预检，耗尽后引导收敛）
+    max-user-message-chars: 6000 # 当前用户请求的字符上限（头尾保留截断，防超长粘贴撑爆窗口）
+    summarize-threads: 2         # 摘要任务线程数（同一会话串行，不同会话并行）
