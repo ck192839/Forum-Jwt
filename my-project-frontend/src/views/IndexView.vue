@@ -1,5 +1,5 @@
 <script setup>
-import {inject, reactive, ref} from "vue";
+import {inject, reactive, ref, watch} from "vue";
 import {
     Bell,
     ChatDotSquare, Check, CoffeeCup, Collection, DataLine,
@@ -14,6 +14,7 @@ import LightCard from "@/components/LightCard.vue";
 import UserInfo from "@/components/UserInfo.vue";
 import {apiNotificationDelete, apiNotificationDeleteAll, apiNotificationList} from "@/net/api/user";
 import {apiForumTypes, apiTopicSearch} from "@/net/api/forum";
+import {notificationOpenRequest} from "@/components/notificationBridge";
 import TopicTag from "@/components/TopicTag.vue";
 import {useStore} from "@/store";
 import router from "@/router";
@@ -54,6 +55,23 @@ const searchInput = reactive({
     text: ''
 })
 const notification = ref([])
+// 通知弹层受控开关：铃铛点击切换；el-popover 未暴露 show()，头像下拉的
+// 「消息列表」只能通过 notificationBridge 请求置为 true
+const notificationOpen = ref(false)
+
+watch(notificationOpenRequest, () => {
+    notificationOpen.value = true
+})
+
+watch(notificationOpen, open => {
+    if (!open) return
+    // 等本次点击事件冒泡结束后再挂一次性监听，避免弹层刚打开就被同一次点击关掉
+    setTimeout(() => document.addEventListener('click', closeNotificationPanel, {once: true}))
+})
+
+function closeNotificationPanel() {
+    notificationOpen.value = false
+}
 
 const loadNotification =
         () => apiNotificationList(data => notification.value = data)
@@ -135,32 +153,35 @@ apiForumTypes(data => {
                     </el-autocomplete>
                 </div>
                 <user-info>
-                    <el-popover placement="bottom" :width="350" trigger="click">
+                    <el-popover placement="bottom" :width="350" :visible="notificationOpen">
                         <template #reference>
                             <el-badge is-dot :hidden="!notification.length">
-                                <div class="notification">
+                                <div class="notification" @click.stop="notificationOpen = !notificationOpen">
                                     <el-icon><Bell/></el-icon>
                                     <div style="font-size: 10px">消息</div>
                                 </div>
                             </el-badge>
                         </template>
-                        <el-empty :image-size="80" description="暂时没有未读消息哦~" v-if="!notification.length"/>
-                        <el-scrollbar :max-height="500" v-else>
-                            <light-card v-for="item in notification" class="notification-item"
-                                        @click="confirmNotification(item.id, item.url)">
-                                <div>
-                                    <el-tag size="small" :type="item.type">消息</el-tag>&nbsp;
-                                    <span style="font-weight: bold">{{item.title}}</span>
-                                </div>
-                                <el-divider style="margin: 7px 0 3px 0"/>
-                                <div style="font-size: 13px;color: grey">
-                                    {{item.content}}
-                                </div>
-                            </light-card>
-                        </el-scrollbar>
-                        <div style="margin-top: 10px">
-                            <el-button size="small" type="info" :icon="Check" @click="deleteAllNotification"
-                                       style="width: 100%" plain>清除全部未读消息</el-button>
+                        <!-- 内部点击不冒泡到 document，避免误触发一次性关闭监听 -->
+                        <div @click.stop>
+                            <el-empty :image-size="80" description="暂时没有未读消息哦~" v-if="!notification.length"/>
+                            <el-scrollbar :max-height="500" v-else>
+                                <light-card v-for="item in notification" class="notification-item"
+                                            @click="confirmNotification(item.id, item.url)">
+                                    <div>
+                                        <el-tag size="small" :type="item.type">消息</el-tag>&nbsp;
+                                        <span style="font-weight: bold">{{item.title}}</span>
+                                    </div>
+                                    <el-divider style="margin: 7px 0 3px 0"/>
+                                    <div style="font-size: 13px;color: grey">
+                                        {{item.content}}
+                                    </div>
+                                </light-card>
+                            </el-scrollbar>
+                            <div style="margin-top: 10px">
+                                <el-button size="small" type="info" :icon="Check" @click="deleteAllNotification"
+                                           style="width: 100%" plain>清除全部未读消息</el-button>
+                            </div>
                         </div>
                     </el-popover>
                 </user-info>

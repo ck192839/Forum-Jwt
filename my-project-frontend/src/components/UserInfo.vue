@@ -5,6 +5,7 @@ import {isRoleAdmin, logout} from "@/net";
 import router from "@/router";
 import {computed} from "vue";
 import {useRoute} from "vue-router";
+import {requestNotificationOpen} from "@/components/notificationBridge";
 
 const route = useRoute()
 const store = useStore()
@@ -13,6 +14,18 @@ const isAdminPage = computed(() => route.fullPath.startsWith("/admin"))
 
 function userLogout() {
     logout(() => router.push("/"))
+}
+
+function openUserSetting() {
+    router.push("/index/user-setting")
+}
+
+// 通知弹层挂在 /index 布局里：不在用户端时先跳过去再请求打开
+async function openMessageList() {
+    if (!route.path.startsWith("/index")) {
+        await router.push("/index")
+    }
+    requestNotificationOpen()
 }
 </script>
 
@@ -44,13 +57,13 @@ function userLogout() {
         <el-dropdown>
             <el-avatar :src="store.avatarUrl"/>
             <template #dropdown>
-                <el-dropdown-item>
+                <el-dropdown-item @click="openUserSetting">
                     <el-icon>
                         <Operation/>
                     </el-icon>
                     个人设置
                 </el-dropdown-item>
-                <el-dropdown-item>
+                <el-dropdown-item @click="openMessageList">
                     <el-icon>
                         <Message/>
                     </el-icon>

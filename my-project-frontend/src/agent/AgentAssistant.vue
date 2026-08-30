@@ -8,6 +8,7 @@ import {
   MagicStick,
   Plus,
   Promotion,
+  School,
   VideoPause
 } from '@element-plus/icons-vue'
 import { createAgentAssistantController } from './useAgentAssistant'
@@ -171,11 +172,14 @@ async function resetAndNewSession() {
     <transition name="agent-panel">
       <aside v-if="open" class="agent-panel" aria-label="发帖助手">
         <header class="agent-header">
-          <div>
-            <h2>发帖助手</h2>
-            <span :class="['run-state', state.runStatus]">
-              {{ submitting ? '处理中' : '就绪' }}
-            </span>
+          <div class="agent-brand">
+            <span class="agent-brand__mark"><School/></span>
+            <div>
+              <h2>发帖助手</h2>
+              <span :class="['run-state', state.runStatus]">
+                {{ submitting ? '处理中' : '就绪' }}
+              </span>
+            </div>
           </div>
           <button type="button" class="icon-button" title="关闭" aria-label="关闭" @click="open = false">
             <Close/>
@@ -248,11 +252,7 @@ async function resetAndNewSession() {
               </template>
             </div>
 
-            <div v-if="state.streamingText" class="message assistant streaming">
-              <!-- eslint-disable-next-line vue/no-v-html — 内容已经 sanitizeMarkdown 消毒 -->
-              <div class="message-body" v-html="assistantHtml(state.streamingText)"></div>
-            </div>
-
+            <!-- 当前 run 的工具执行与引用：渲染在流式回答上方，跟随会话流而不是沉到底部 -->
             <section v-if="state.timeline.length" class="tool-timeline" aria-label="工具执行状态">
               <div v-for="(tool, index) in state.timeline" :key="`${tool.runId}-${tool.toolName}-${index}`"
                    class="tool-row" role="status"
@@ -268,7 +268,14 @@ async function resetAndNewSession() {
                           :to="`/index/topic-detail/${citation.topicId}`">
                 <span>#{{ citation.topicId }}</span>{{ citation.title }}
               </RouterLink>
-            </nav>            <section v-if="state.draft" class="draft-result">
+            </nav>
+
+            <div v-if="state.streamingText" class="message assistant streaming">
+              <!-- eslint-disable-next-line vue/no-v-html — 内容已经 sanitizeMarkdown 消毒 -->
+              <div class="message-body" v-html="assistantHtml(state.streamingText)"></div>
+            </div>
+
+            <section v-if="state.draft" class="draft-result">
               <div class="draft-heading">
                 <div>
                   <span>草稿 v{{ state.draft.version }}</span>
@@ -329,7 +336,7 @@ async function resetAndNewSession() {
 
 .agent-panel {
   position: fixed;
-  top: 55px;
+  top: 65px;
   right: 0;
   bottom: 0;
   z-index: 1300;
@@ -338,8 +345,9 @@ async function resetAndNewSession() {
   grid-template-rows: auto auto 1fr auto;
   color: var(--el-text-color-primary);
   background: var(--el-bg-color);
-  border-left: 1px solid var(--el-border-color);
-  box-shadow: -12px 0 32px rgb(15 23 42 / 16%);
+  border-radius: 14px 0 0 0;
+  box-shadow: -16px 0 48px rgb(15 23 42 / 14%), 0 0 0 1px rgb(15 23 42 / 4%);
+  overflow: hidden;
 }
 
 .agent-header,
@@ -362,11 +370,39 @@ async function resetAndNewSession() {
   justify-content: space-between;
 }
 
+.agent-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.agent-brand__mark {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  color: #fff;
+  background: #2563eb;
+  box-shadow: 0 6px 16px rgb(37 99 235 / 22%);
+}
+
+.agent-brand__mark svg {
+  width: 19px;
+  height: 19px;
+}
+
 .agent-header h2,
 .draft-heading h3 {
   margin: 0;
   font-size: 17px;
   letter-spacing: 0;
+}
+
+.agent-brand .run-state {
+  display: block;
+  margin-left: 0;
+  font-size: 12px;
 }
 
 .run-state {
@@ -387,7 +423,13 @@ async function resetAndNewSession() {
   color: inherit;
   background: var(--el-fill-color-blank);
   border: 1px solid var(--el-border-color);
-  border-radius: 5px;
+  border-radius: 8px;
+  outline: none;
+  transition: border-color .2s ease;
+}
+
+.session-toolbar select:hover {
+  border-color: var(--el-border-color-hover);
 }
 
 .icon-button {
@@ -401,6 +443,7 @@ async function resetAndNewSession() {
   border: 1px solid transparent;
   border-radius: 5px;
   cursor: pointer;
+  transition: background .2s ease, color .2s ease;
 }
 
 .icon-button:hover { background: var(--el-fill-color-light); }
@@ -411,6 +454,22 @@ async function resetAndNewSession() {
   min-height: 0;
   overflow-y: auto;
   padding: 16px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--el-border-color) transparent;
+  scroll-behavior: smooth;
+}
+
+.agent-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.agent-content::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: var(--el-border-color);
+}
+
+.agent-content::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .center-state,
@@ -429,21 +488,42 @@ async function resetAndNewSession() {
   max-width: 88%;
   margin-bottom: 10px;
   padding: 9px 11px;
-  border-radius: 7px;
+  border-radius: 12px;
   overflow-wrap: anywhere;
   font-size: 14px;
+  animation: message-rise .22s ease;
+}
+
+@keyframes message-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .message {
+    animation: none;
+  }
 }
 
 .message.user {
   margin-left: auto;
   color: white;
-  background: #2563eb;
+  background: linear-gradient(135deg, #2f72ee, #2563eb);
+  border-bottom-right-radius: 4px;
   white-space: pre-wrap;
 }
 
 .message.assistant {
   background: var(--el-fill-color-light);
-  border: 1px solid var(--el-border-color-lighter);
+  border: 1px solid color-mix(in srgb, var(--el-border-color) 55%, transparent);
+  border-bottom-left-radius: 4px;
 }
 
 .message-body :deep(a) {
@@ -469,6 +549,22 @@ async function resetAndNewSession() {
 
 .message.question { border-left: 3px solid #d97706; }
 
+.streaming .message-body::after {
+  content: '';
+  width: 7px;
+  height: 14px;
+  display: inline-block;
+  margin-left: 3px;
+  vertical-align: -2px;
+  border-radius: 2px;
+  background: #2563eb;
+  animation: caret-blink 1s steps(2, start) infinite;
+}
+
+@keyframes caret-blink {
+  50% { opacity: 0; }
+}
+
 .context-notice {
   margin-bottom: 10px;
 }
@@ -493,9 +589,9 @@ async function resetAndNewSession() {
 
 .tool-timeline {
   margin: 12px 0;
-  padding: 8px 0;
-  border-top: 1px solid var(--el-border-color-lighter);
-  border-bottom: 1px solid var(--el-border-color-lighter);
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--el-fill-color-lighter);
 }
 
 .tool-row {
@@ -527,8 +623,8 @@ async function resetAndNewSession() {
 .draft-result {
   margin-top: 14px;
   padding: 12px;
-  border: 1px solid #d6a34a;
-  border-radius: 7px;
+  border: 1px solid color-mix(in srgb, #f59e0b 32%, transparent);
+  border-radius: 12px;
   background: color-mix(in srgb, #f59e0b 7%, var(--el-bg-color));
 }
 
@@ -551,7 +647,11 @@ async function resetAndNewSession() {
   padding: 7px 10px;
   color: white;
   background: #a16207;
+  border-radius: 8px;
+  transition: background .2s ease;
 }
+
+.draft-apply:hover { background: #8f5606; }
 
 .draft-result pre {
   max-height: 180px;
@@ -569,6 +669,7 @@ async function resetAndNewSession() {
   color: #b91c1c;
   background: color-mix(in srgb, #ef4444 8%, var(--el-bg-color));
   border-left: 3px solid #dc2626;
+  border-radius: 6px;
   font-size: 13px;
 }
 
@@ -587,9 +688,16 @@ async function resetAndNewSession() {
   color: inherit;
   background: var(--el-fill-color-blank);
   border: 1px solid var(--el-border-color);
-  border-radius: 5px;
+  border-radius: 10px;
   font: inherit;
   font-size: 14px;
+  outline: none;
+  transition: border-color .2s ease, box-shadow .2s ease;
+}
+
+.agent-composer textarea:focus {
+  border-color: rgba(37, 99, 235, .55);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, .12);
 }
 
 .composer-command {
@@ -598,9 +706,12 @@ async function resetAndNewSession() {
   height: 36px;
   padding: 0 12px;
   color: white;
-  background: #16803c;
+  background: #2563eb;
+  border-radius: 10px;
+  transition: background .2s ease, opacity .2s ease;
 }
 
+.composer-command:hover { background: #1d4fd8; }
 .composer-command.run-cancel { background: #b45309; }
 .composer-command:disabled { opacity: .45; cursor: not-allowed; }
 
@@ -608,12 +719,18 @@ async function resetAndNewSession() {
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .agent-panel-enter-active,
-.agent-panel-leave-active { transition: transform .2s ease; }
+.agent-panel-leave-active {
+  transition: transform .28s cubic-bezier(.32, .72, .35, 1), opacity .28s ease;
+}
+
 .agent-panel-enter-from,
-.agent-panel-leave-to { transform: translateX(100%); }
+.agent-panel-leave-to {
+  opacity: 0;
+  transform: translateX(60px);
+}
 
 @media (max-width: 640px) {
-  .agent-panel { top: 0; width: 100vw; }
+  .agent-panel { top: 0; width: 100vw; border-radius: 0; }
   .agent-launcher { right: 16px; bottom: 16px; }
 }
 </style>

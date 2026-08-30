@@ -105,7 +105,7 @@ onMounted(() => {
 </script>
 
 <template>
-    <div style="display: flex;margin: 20px auto;gap: 20px;max-width: 900px;padding: 0 20px">
+    <div style="display: flex;margin: 20px auto;gap: 20px;max-width: 1080px;padding: 0 20px">
         <div style="flex: 1">
             <light-card>
                 <div class="create-topic" @click="editor = true">
