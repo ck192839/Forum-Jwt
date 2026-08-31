@@ -28,7 +28,6 @@ public class TopicKeywordIndexer {
         document.setId(topic.getId());
         document.setTitle(topic.getTitle());
         document.setIntro(topic.getIntro());
-        document.setContent(topic.getContent());
         document.setType(topic.getType());
         document.setUid(topic.getUid());
         document.setTime(topic.getTime());

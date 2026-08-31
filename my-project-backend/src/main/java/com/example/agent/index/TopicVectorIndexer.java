@@ -17,9 +17,10 @@ import java.util.Map;
  * 流程：
  * 1. 先按 topicId 删除旧向量（幂等更新）
  * 2. 帖子是隐藏的 → 不写（相当于删除）
- * 3. 否则分块 → 每块一个 Document，元数据记录 topicId/title/excerpt/topicTypeId/visible
+ * 3. 否则分块 → 每块一个 Document，元数据记录 topicId/title/topicTypeId/topicTime/visible
  *
- * 元数据里的 visible 供向量检索时过滤（SpringAiVectorTopicRetriever 用它过滤隐藏帖）。
+ * 元数据里的 visible 供向量检索时过滤（SpringAiVectorTopicRetriever 用它过滤隐藏帖）；
+ * 命中块的摘要直接取 Document 文本（即块自身内容），不在元数据里冗余存全文。
  */
 public class TopicVectorIndexer {
     private final VectorStore vectorStore; // 向量库（ES）
@@ -46,8 +47,10 @@ public class TopicVectorIndexer {
             Map<String, Object> metadata = new HashMap<>();
             metadata.put("topicId", topic.getId());
             metadata.put("title", topic.getTitle());
-            metadata.put("excerpt", topic.getIntro());
             metadata.put("topicTypeId", topic.getType());
+            if (topic.getTime() != null) {
+                metadata.put("topicTime", topic.getTime().getTime()); // 检索结果透出时间，供模型判断信息新旧
+            }
             metadata.put("visible", true); // 检索时按此过滤可见性
             documents.add(new Document(
                     "topic-" + topic.getId() + "-chunk-" + index, // 文档 id（稳定）

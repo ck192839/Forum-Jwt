@@ -16,8 +16,6 @@ public class TopicDocument {
     Integer id;
     @Field(type = FieldType.Text)
     String title;
-    @Field(type = FieldType.Text, index = false)
-    String content;
     @Field(type = FieldType.Text)
     String intro;
     @Field(type = FieldType.Integer)

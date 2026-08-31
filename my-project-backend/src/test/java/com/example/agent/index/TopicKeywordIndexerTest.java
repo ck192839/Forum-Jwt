@@ -42,7 +42,6 @@ class TopicKeywordIndexerTest {
         assertEquals(7, document.getId());
         assertEquals("Campus network guide", document.getTitle());
         assertEquals("intro text", document.getIntro());
-        assertEquals("{\"ops\":[{\"insert\":\"body\"}]}", document.getContent());
         assertEquals(3, document.getType());
         assertEquals(12, document.getUid());
         assertEquals(time, document.getTime());

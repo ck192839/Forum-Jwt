@@ -14,7 +14,7 @@ import java.util.Map;
  * 要点：
  * - 检索时用 filterExpression "visible == true" 过滤隐藏帖（向量库元数据里标记了 visible）
  * - 一个帖子可能被分块索引成多个向量文档，这里按 topicId 去重（putIfAbsent）
- * - 摘要优先用元数据里的 excerpt，缺失时回退到文档文本
+ * - 摘要用命中块自身的文本——命中帖尾的块时看到的就是该块内容，而非全文开头
  */
 public class SpringAiVectorTopicRetriever implements VectorTopicRetriever {
     private static final int TOP_K = 20; // 检索前 20 条向量
@@ -49,8 +49,9 @@ public class SpringAiVectorTopicRetriever implements VectorTopicRetriever {
         return new TopicSearchHit(
                 number(metadata, "topicId"),
                 String.valueOf(metadata.getOrDefault("title", "")),
-                String.valueOf(metadata.getOrDefault("excerpt", document.getText())),
-                number(metadata, "topicTypeId"));
+                document.getText(),
+                number(metadata, "topicTypeId"),
+                timestamp(metadata.get("topicTime")));
     }
 
     /** 元数据取值转 int（兼容 Number 与字符串两种存储形态）。 */
@@ -60,5 +61,13 @@ public class SpringAiVectorTopicRetriever implements VectorTopicRetriever {
             return number.intValue();
         }
         return Integer.parseInt(String.valueOf(value));
+    }
+
+    /** 元数据里的时间转 epoch 毫秒（旧块缺失该字段时为 null）。 */
+    private Long timestamp(Object value) {
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+        return value == null ? null : Long.parseLong(String.valueOf(value));
     }
 }

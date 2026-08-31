@@ -66,7 +66,7 @@ class HybridRetrievalEvaluatorTest {
     }
 
     private TopicSearchHit hit(int topicId) {
-        return new TopicSearchHit(topicId, "Topic " + topicId, "Excerpt " + topicId, topicId);
+        return new TopicSearchHit(topicId, "Topic " + topicId, "Excerpt " + topicId, topicId, null);
     }
 
     private HybridRetrievalEvaluator evaluator(

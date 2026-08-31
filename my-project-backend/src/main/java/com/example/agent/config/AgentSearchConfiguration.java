@@ -9,11 +9,11 @@ import com.example.agent.search.HybridTopicSearchService;
 import com.example.agent.search.KeywordTopicRetriever;
 import com.example.agent.search.SpringAiVectorTopicRetriever;
 import com.example.agent.search.VectorTopicRetriever;
-import com.example.repository.TopicRepository;
 import com.example.mapper.TopicMapper;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -40,12 +40,12 @@ public class AgentSearchConfiguration {
     }
 
     /**
-     * 关键词检索实现：基于 Elasticsearch 的 keyword 字段检索。
-     * 通过 TopicRepository 接口实现，方便替换成其他存储。
+     * 关键词检索实现：基于 Elasticsearch 的 NativeQuery + highlight 片段。
+     * 不走 TopicRepository（站内搜索在用），Agent 侧需要命中片段做摘要。
      */
     @Bean
-    KeywordTopicRetriever keywordTopicRetriever(TopicRepository topicRepository) {
-        return new ElasticsearchKeywordTopicRetriever(topicRepository);
+    KeywordTopicRetriever keywordTopicRetriever(ElasticsearchOperations elasticsearchOperations) {
+        return new ElasticsearchKeywordTopicRetriever(elasticsearchOperations);
     }
 
     /**

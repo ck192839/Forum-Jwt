@@ -40,7 +40,8 @@ class ForumAuthoringToolsTest {
 
     @Test
     void searchesSimilarTopicsUsingHybridRetrieval() {
-        TopicSearchHit hit = new TopicSearchHit(42, "Previous guide", "Useful excerpt", 3);
+        long postedAt = System.currentTimeMillis();
+        TopicSearchHit hit = new TopicSearchHit(42, "Previous guide", "Useful excerpt", 3, postedAt);
         KeywordTopicRetriever keyword = query -> List.of(hit);
         VectorTopicRetriever vector = query -> List.of(hit);
         HybridTopicSearchService search = new HybridTopicSearchService(keyword, vector);
@@ -50,6 +51,7 @@ class ForumAuthoringToolsTest {
 
         assertEquals(1, result.size());
         assertEquals(42, result.get(0).topicId());
+        assertEquals(postedAt, result.get(0).topicTime());
         assertEquals(Set.of(RetrievalSource.KEYWORD, RetrievalSource.VECTOR), result.get(0).sources());
     }
 
@@ -113,7 +115,7 @@ class ForumAuthoringToolsTest {
 
     @Test
     void truncatesLongSearchExcerptsAtTheConfiguredLimit() {
-        TopicSearchHit hit = new TopicSearchHit(42, "Guide", "字".repeat(500), 3);
+        TopicSearchHit hit = new TopicSearchHit(42, "Guide", "字".repeat(500), 3, null);
         HybridTopicSearchService search = new HybridTopicSearchService(query -> List.of(hit), query -> List.of());
         // excerpt 上限故意设为 100：验证截断生效
         ForumAuthoringTools tools = new ForumAuthoringTools(

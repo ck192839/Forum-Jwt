@@ -10,9 +10,9 @@ class HybridTopicSearchServiceTest {
 
     @Test
     void combinesKeywordAndVectorResults() {
-        TopicSearchHit keyword = new TopicSearchHit(1, "Keyword", "", 1);
-        TopicSearchHit shared = new TopicSearchHit(2, "Shared", "", 1);
-        TopicSearchHit vector = new TopicSearchHit(3, "Vector", "", 1);
+        TopicSearchHit keyword = new TopicSearchHit(1, "Keyword", "", 1, null);
+        TopicSearchHit shared = new TopicSearchHit(2, "Shared", "", 1, null);
+        TopicSearchHit vector = new TopicSearchHit(3, "Vector", "", 1, null);
         HybridTopicSearchService service = new HybridTopicSearchService(
                 query -> List.of(keyword, shared),
                 query -> List.of(shared, vector)
@@ -26,7 +26,7 @@ class HybridTopicSearchServiceTest {
     @Test
     void fallsBackToKeywordResultsWhenVectorSearchFails() {
         List<TopicSearchHit> keyword = java.util.stream.IntStream.rangeClosed(1, 8)
-                .mapToObj(id -> new TopicSearchHit(id, "Keyword " + id, "", 1))
+                .mapToObj(id -> new TopicSearchHit(id, "Keyword " + id, "", 1, null))
                 .toList();
         HybridTopicSearchService service = new HybridTopicSearchService(
                 query -> keyword,

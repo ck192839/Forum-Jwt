@@ -84,7 +84,8 @@ public class ForumAuthoringTools {
                         ranked.topic().title(),
                         truncate(ranked.topic().excerpt(), excerptMaxChars),
                         ranked.topic().topicTypeId(),
-                        ranked.sources()))
+                        ranked.sources(),
+                        ranked.topic().topicTime()))
                 .toList();
     }
 

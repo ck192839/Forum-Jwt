@@ -823,7 +823,7 @@ class ForumReActAgentTest {
         }
 
         private ForumAuthoringTools toolsReturningTopic(int topicId) {
-                TopicSearchHit hit = new TopicSearchHit(topicId, "Previous guide", "Excerpt", 3);
+                TopicSearchHit hit = new TopicSearchHit(topicId, "Previous guide", "Excerpt", 3, null);
                 TopicTypeMapper typeMapper = mock(TopicTypeMapper.class);
                 when(typeMapper.selectById(3)).thenReturn(new TopicType());
                 return new ForumAuthoringTools(

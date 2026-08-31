@@ -102,7 +102,8 @@ class RealModelAgentEvaluationIT {
             indexVectorCorpus(vectorIndexer, restClient, dataset);
             long indexingSetupLatencyMillis = Duration.between(setupStarted, Instant.now()).toMillis();
 
-            KeywordTopicRetriever keywordRetriever = new ElasticsearchKeywordTopicRetriever(topicRepository);
+            KeywordTopicRetriever keywordRetriever = new ElasticsearchKeywordTopicRetriever(
+                    context.getBean(ElasticsearchOperations.class));
             VectorTopicRetriever vectorRetriever = new SpringAiVectorTopicRetriever(vectorStore);
             HybridRetrievalEvaluator retrievalEvaluator = new HybridRetrievalEvaluator(
                     keywordRetriever,
@@ -198,7 +199,6 @@ class RealModelAgentEvaluationIT {
         document.setId(corpusTopic.topicId());
         document.setTitle(corpusTopic.title());
         document.setIntro(corpusTopic.body());
-        document.setContent(corpusTopic.body());
         document.setType(corpusTopic.topicTypeId());
         document.setUid(1);
         document.setTime(new Date());
