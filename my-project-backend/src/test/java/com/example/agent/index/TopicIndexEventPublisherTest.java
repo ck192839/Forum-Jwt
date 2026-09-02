@@ -24,7 +24,7 @@ class TopicIndexEventPublisherTest {
     @Test
     void sendsOnlyAfterTheSurroundingTransactionCommits() {
         RabbitTemplate rabbitTemplate = confirmedRabbitTemplate();
-        TopicIndexEventPublisher publisher = new TopicIndexEventPublisher(rabbitTemplate);
+        TopicIndexEventPublisher publisher = new TopicIndexEventPublisher(rabbitTemplate, null, null, null);
 
         transactionTemplate().executeWithoutResult(status -> {
             publisher.upsert(7);
@@ -41,7 +41,7 @@ class TopicIndexEventPublisherTest {
     @Test
     void discardsTheEventWhenTheSurroundingTransactionRollsBack() {
         RabbitTemplate rabbitTemplate = confirmedRabbitTemplate();
-        TopicIndexEventPublisher publisher = new TopicIndexEventPublisher(rabbitTemplate);
+        TopicIndexEventPublisher publisher = new TopicIndexEventPublisher(rabbitTemplate, null, null, null);
 
         transactionTemplate().executeWithoutResult(status -> {
             publisher.delete(8);
@@ -54,7 +54,7 @@ class TopicIndexEventPublisherTest {
     @Test
     void sendsImmediatelyWhenThereIsNoTransaction() {
         RabbitTemplate rabbitTemplate = confirmedRabbitTemplate();
-        TopicIndexEventPublisher publisher = new TopicIndexEventPublisher(rabbitTemplate);
+        TopicIndexEventPublisher publisher = new TopicIndexEventPublisher(rabbitTemplate, null, null, null);
 
         publisher.upsert(9);
 
@@ -73,7 +73,7 @@ class TopicIndexEventPublisherTest {
         doThrow(failure).when(rabbitTemplate).convertAndSend(
                 eq(Const.MQ_TOPIC_INDEX), eq(event), any(CorrelationData.class)
         );
-        TopicIndexEventPublisher publisher = new TopicIndexEventPublisher(rabbitTemplate);
+        TopicIndexEventPublisher publisher = new TopicIndexEventPublisher(rabbitTemplate, null, null, null);
 
         // 业务请求不能因为索引事件失败而报错（数据已落库，索引可重建兜底）
         assertDoesNotThrow(() -> publisher.upsert(10));
@@ -87,7 +87,7 @@ class TopicIndexEventPublisherTest {
         doThrow(failure).when(rabbitTemplate).convertAndSend(
                 eq(Const.MQ_TOPIC_INDEX), eq(event), any(CorrelationData.class)
         );
-        TopicIndexEventPublisher publisher = new TopicIndexEventPublisher(rabbitTemplate);
+        TopicIndexEventPublisher publisher = new TopicIndexEventPublisher(rabbitTemplate, null, null, null);
 
         assertDoesNotThrow(() -> transactionTemplate().executeWithoutResult(status -> publisher.delete(11)));
     }
@@ -101,7 +101,7 @@ class TopicIndexEventPublisherTest {
         doThrow(failure).when(rabbitTemplate).convertAndSend(
                 eq(Const.MQ_TOPIC_INDEX), eq(first), any(CorrelationData.class)
         );
-        TopicIndexEventPublisher publisher = new TopicIndexEventPublisher(rabbitTemplate);
+        TopicIndexEventPublisher publisher = new TopicIndexEventPublisher(rabbitTemplate, null, null, null);
 
         assertDoesNotThrow(() -> transactionTemplate().executeWithoutResult(status -> {
             publisher.delete(12);

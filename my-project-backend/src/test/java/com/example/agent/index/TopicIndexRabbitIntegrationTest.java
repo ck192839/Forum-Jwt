@@ -112,7 +112,7 @@ class TopicIndexRabbitIntegrationTest {
         try {
             assertTrue(rabbitAdmin.deleteQueue(Const.MQ_TOPIC_INDEX));
 
-            TopicIndexEventPublisher publisher = new TopicIndexEventPublisher(rabbitTemplate);
+            TopicIndexEventPublisher publisher = new TopicIndexEventPublisher(rabbitTemplate, null, null, null);
 
             // 路由失败只记录日志（索引可重建兜底），绝不能把业务请求打成失败
             assertDoesNotThrow(() -> publisher.upsert(100));

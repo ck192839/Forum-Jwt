@@ -1,10 +1,13 @@
 package com.example.agent.index;
 
+import com.example.mapper.TopicMapper;
+import com.example.entity.dto.Topic;
 import com.example.utils.Const;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.AmqpException;
 import org.springframework.amqp.core.AmqpMessageReturnedException;
 import org.springframework.amqp.rabbit.connection.CorrelationData;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -34,10 +37,25 @@ import java.util.concurrent.TimeoutException;
 public class TopicIndexEventPublisher {
     private static final long CONFIRM_TIMEOUT_SECONDS = 5; // 等待 ack 的超时
 
+    @Value("${agent.index.sync:false}")
+    private boolean syncIndex;
+
     private final RabbitTemplate rabbitTemplate;
 
-    public TopicIndexEventPublisher(RabbitTemplate rabbitTemplate) {
+    private final TopicMapper topicMapper;
+
+    private final TopicVectorIndexer indexer;
+
+    private final TopicKeywordIndexer keywordIndexer;
+
+    public TopicIndexEventPublisher(RabbitTemplate rabbitTemplate,
+                                    TopicMapper topicMapper,
+                                    TopicVectorIndexer indexer,
+                                    TopicKeywordIndexer keywordIndexer) {
         this.rabbitTemplate = rabbitTemplate;
+        this.topicMapper = topicMapper;
+        this.indexer = indexer;
+        this.keywordIndexer = keywordIndexer;
     }
 
     /** 发「写入/更新」索引事件（新增/编辑帖子后调用）。 */
@@ -96,6 +114,16 @@ public class TopicIndexEventPublisher {
 
     /** 发送单个事件（任何失败只记录日志，绝不打断业务请求——索引可全量重建兜底）。 */
     private void send(TopicIndexEvent event) {
+        if (syncIndex) {
+            // 基准测试开关：agent.index.sync=true 时在请求线程内直接写索引（同步基线），
+            // 用于对比 MQ 异步化的接口响应收益；日常保持 false。
+            try {
+                applyInline(event);
+            } catch (RuntimeException exception) {
+                log.error("Sync index write failed for topic {}", event.topicId(), exception);
+            }
+            return;
+        }
         try {
             sendConfirmed(event);
         } catch (AmqpException exception) {
@@ -129,6 +157,23 @@ public class TopicIndexEventPublisher {
             throw new AmqpException("Interrupted while waiting for RabbitMQ publisher confirmation", exception);
         } catch (ExecutionException | TimeoutException exception) {
             throw new AmqpException("Unable to confirm topic index event delivery", exception);
+        }
+    }
+
+    /** 同步模式下直接写两个索引，逻辑与 TopicIndexEventConsumer.handle 一致。 */
+    private void applyInline(TopicIndexEvent event) {
+        if (event.action() == TopicIndexAction.DELETE) {
+            indexer.delete(event.topicId());
+            keywordIndexer.delete(event.topicId());
+            return;
+        }
+        Topic topic = topicMapper.selectById(event.topicId());
+        if (topic == null) {
+            indexer.delete(event.topicId());
+            keywordIndexer.delete(event.topicId());
+        } else {
+            indexer.index(topic);
+            keywordIndexer.index(topic);
         }
     }
 

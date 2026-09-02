@@ -24,6 +24,7 @@ import com.example.utils.ProhibitedUtils;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.Resource;
 import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.data.elasticsearch.core.SearchHit;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -420,8 +421,26 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
                 .toList();
     }
 
+    @Value("${search.db:false}")
+    private boolean dbSearch;
+
     @Override
     public List<TopicSearchVO> searchTopic(String keyword) {
+        if (dbSearch) {
+            // 基准测试开关：search.db=true 时走 MySQL LIKE 全表扫（同步基线），
+            // 用于对比 Elasticsearch 检索收益；日常保持 false。
+            return baseMapper.selectList(Wrappers.<Topic>query()
+                            .select("id", "title", "intro", "type")
+                            .like("title", keyword).or().like("intro", keyword)
+                            .last("LIMIT 20")).stream().map(topic -> {
+                TopicSearchVO vo = new TopicSearchVO();
+                vo.setId(topic.getId());
+                vo.setTitle(topic.getTitle());
+                vo.setIntro(topic.getIntro());
+                vo.setType(topic.getType());
+                return vo;
+            }).toList();
+        }
         List<SearchHit<TopicDocument>> list = topicRepository.findByTitleOrIntro(keyword);
         return list.stream().map(item -> {
             TopicSearchVO vo = new TopicSearchVO();
