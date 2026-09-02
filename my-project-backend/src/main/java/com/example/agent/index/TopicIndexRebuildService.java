@@ -79,14 +79,25 @@ public class TopicIndexRebuildService {
             indexer.clear();
             keywordIndexer.clear();
             for (Topic topic : topics) {
+                // 两个索引独立容错：向量写失败（如 embedding 接口限流）不能拖累关键词索引，
+                // 否则论坛搜索会大面积漏帖；processed 只统计双索引都成功的帖子
+                boolean indexed = true;
                 try {
                     indexer.index(topic);
-                    keywordIndexer.index(topic);
-                    processed++;
                 } catch (RuntimeException exception) {
-                    // 单帖失败不中断整体重建
+                    indexed = false;
                     failed++;
                     log.error("Unable to rebuild vector index for topic {}", topic.getId(), exception);
+                }
+                try {
+                    keywordIndexer.index(topic);
+                } catch (RuntimeException exception) {
+                    indexed = false;
+                    failed++;
+                    log.error("Unable to rebuild keyword index for topic {}", topic.getId(), exception);
+                }
+                if (indexed) {
+                    processed++;
                 }
                 status = new TopicIndexRebuildStatus(
                         true, topics.size(), processed, failed, startedAt, null);
