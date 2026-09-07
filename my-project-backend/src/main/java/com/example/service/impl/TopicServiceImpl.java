@@ -122,7 +122,7 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
         if (baseMapper.update(null, Wrappers.<Topic>update()
                 .eq("id", tid)
                 .set("type", type)) > 0) {
-            cacheUtils.deleteCachePattern(Const.FORUM_TOPIC_PREVIEW_CACHE + "*");
+            cacheUtils.deleteCachePatternAfterCommit(Const.FORUM_TOPIC_PREVIEW_CACHE + "*");
             topicIndexEventPublisher.upsert(tid);
         }
     }
@@ -147,7 +147,7 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
         topic.setContent(vo.getContent().toJSONString());
         topic.createIntro();
         if (this.save(topic)) {
-            cacheUtils.deleteCachePattern(Const.FORUM_TOPIC_PREVIEW_CACHE + "*");// 删除所有缓存
+            cacheUtils.deleteCachePatternAfterCommit(Const.FORUM_TOPIC_PREVIEW_CACHE + "*");// 删除所有缓存
             topicIndexEventPublisher.upsert(topic.getId());
             return null;
         } else {
@@ -175,8 +175,8 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
                 .set("type", vo.getType())
                 .set("intro", Topic.recreateIntro(vo.getContent())));
         if (result == 1) {// todo 自建更新删缓存
-            cacheUtils.deleteCachePattern(Const.FORUM_TOPIC_PREVIEW_CACHE + "*");// 删除所有缓存
-            cacheUtils.deleteCache(Const.FORUM_TOPIC_TOP_CACHE);
+            cacheUtils.deleteCachePatternAfterCommit(Const.FORUM_TOPIC_PREVIEW_CACHE + "*");// 删除所有缓存
+            cacheUtils.deleteCacheAfterCommit(Const.FORUM_TOPIC_TOP_CACHE);
             topicIndexEventPublisher.upsert(vo.getId());
             return null;
         }
@@ -259,8 +259,8 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
     @Transactional
     public void deleteTopic(int id) {// 管理端删除帖子
         int result = baseMapper.deleteById(id);
-        cacheUtils.deleteCachePattern(Const.FORUM_TOPIC_PREVIEW_CACHE + "*");
-        cacheUtils.deleteCache(Const.FORUM_TOPIC_TOP_CACHE);
+        cacheUtils.deleteCachePatternAfterCommit(Const.FORUM_TOPIC_PREVIEW_CACHE + "*");
+        cacheUtils.deleteCacheAfterCommit(Const.FORUM_TOPIC_TOP_CACHE);
         baseMapper.deleteTopicCollect(id);
         baseMapper.deleteTopicLike(id);
         if (result > 0)
@@ -274,8 +274,8 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
                 .eq("id", tid)
                 .eq("uid", uid));
         if (result > 0) {
-            cacheUtils.deleteCachePattern(Const.FORUM_TOPIC_PREVIEW_CACHE + "*");
-            cacheUtils.deleteCache(Const.FORUM_TOPIC_TOP_CACHE);
+            cacheUtils.deleteCachePatternAfterCommit(Const.FORUM_TOPIC_PREVIEW_CACHE + "*");
+            cacheUtils.deleteCacheAfterCommit(Const.FORUM_TOPIC_TOP_CACHE);
             baseMapper.deleteTopicCollect(tid);
             baseMapper.deleteTopicLike(tid);
             topicIndexEventPublisher.delete(tid);
@@ -283,12 +283,13 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
     }
 
     @Override
+    @Transactional
     public void setTopicTop(int tid, boolean top) {// 设置帖子置顶
         int result = baseMapper.update(null, Wrappers.<Topic>update()
                 .eq("id", tid)
                 .set("top", top));
         if (result > 0)
-            cacheUtils.deleteCache(Const.FORUM_TOPIC_TOP_CACHE);
+            cacheUtils.deleteCacheAfterCommit(Const.FORUM_TOPIC_TOP_CACHE);
     }
 
     @Override
@@ -305,8 +306,8 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
                 .eq("id", tid)
                 .set("invisible", invisible));
         if (result > 0) {
-            cacheUtils.deleteCachePattern(Const.FORUM_TOPIC_PREVIEW_CACHE + "*");
-            cacheUtils.deleteCache(Const.FORUM_TOPIC_TOP_CACHE);
+            cacheUtils.deleteCachePatternAfterCommit(Const.FORUM_TOPIC_PREVIEW_CACHE + "*");
+            cacheUtils.deleteCacheAfterCommit(Const.FORUM_TOPIC_TOP_CACHE);
             topicIndexEventPublisher.upsert(tid);
         }
     }

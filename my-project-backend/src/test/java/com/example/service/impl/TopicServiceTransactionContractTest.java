@@ -20,7 +20,8 @@ class TopicServiceTransactionContractTest {
                 TopicServiceImpl.class.getMethod("changeTopicType", int.class, int.class),
                 TopicServiceImpl.class.getMethod("setTopicInvisible", int.class, boolean.class),
                 TopicServiceImpl.class.getMethod("deleteTopic", int.class),
-                TopicServiceImpl.class.getMethod("deleteTopic", int.class, int.class)
+                TopicServiceImpl.class.getMethod("deleteTopic", int.class, int.class),
+                TopicServiceImpl.class.getMethod("setTopicTop", int.class, boolean.class)
         );
 
         for (Method mutation : mutations) {
