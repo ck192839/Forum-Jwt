@@ -93,8 +93,8 @@ function login(username, password, remember, success, failure = defaultFailure){
     }, failure)
 }
 
-function post(url, data, success, failure = defaultFailure) {
-    internalPost(url, data, accessHeader() , success, failure)
+function post(url, data, success, failure = defaultFailure, error = defaultError) {
+    internalPost(url, data, accessHeader() , success, failure, error)
 }
 
 function fetchPost(url, data, signal) {
@@ -117,8 +117,8 @@ function logout(success, failure = defaultFailure){
     }, failure)
 }
 
-function get(url, success, failure = defaultFailure) {
-    internalGet(url, accessHeader(), success, failure)
+function get(url, success, failure = defaultFailure, error = defaultError) {
+    internalGet(url, accessHeader(), success, failure, error)
 }
 
 function isUnauthorized() {

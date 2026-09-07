@@ -2,13 +2,15 @@
 import {Delete, Hide, Lock, Search, Top, User} from "@element-plus/icons-vue";
 import {ElMessage, ElMessageBox} from "element-plus";
 import {
+    apiAgentIndexRebuild,
+    apiAgentIndexRebuildStatus,
     apiForumTopicAllList,
     apiForumTopicDelete,
     apiForumTopicInvisible,
     apiForumTopicLocked,
     apiForumTopicTop, apiTopicChangeType
 } from "@/net/api/forum";
-import {reactive, ref, watchEffect} from "vue";
+import {onBeforeUnmount, reactive, ref, watchEffect} from "vue";
 import {useStore} from "@/store";
 
 const store = useStore();
@@ -27,6 +29,14 @@ const topicList = reactive({
 
 const keyword = ref('')
 const searchText = ref('')
+const indexRebuild = reactive({
+    running: false,
+    total: 0,
+    processed: 0,
+    failed: 0
+})
+let indexRebuildTimer = null
+let indexRebuildMounted = true
 
 const findType = type => props.types.find(item => item.id === type)
 
@@ -70,6 +80,74 @@ const changeTopicType = (tid, type) => {
     })
 }
 
+const stopIndexRebuildPolling = () => {
+    if(indexRebuildTimer !== null) {
+        clearInterval(indexRebuildTimer)
+        indexRebuildTimer = null
+    }
+}
+
+const applyIndexRebuildStatus = status => {
+    if(!status || !indexRebuildMounted) return
+    Object.assign(indexRebuild, status)
+    if(!status.running) {
+        stopIndexRebuildPolling()
+        if(status.failed > 0) {
+            ElMessage.warning(`索引重建完成，${status.failed} 个索引任务失败`)
+        } else {
+            ElMessage.success(`索引重建完成，共处理 ${status.processed} 篇帖子`)
+        }
+    }
+}
+
+const pollIndexRebuildStatus = () => {
+    apiAgentIndexRebuildStatus(
+        applyIndexRebuildStatus,
+        message => {
+            if(!indexRebuildMounted) return
+            stopIndexRebuildPolling()
+            indexRebuild.running = false
+            ElMessage.error(message || '索引重建状态查询失败')
+        },
+        () => {
+            if(!indexRebuildMounted) return
+            stopIndexRebuildPolling()
+            indexRebuild.running = false
+            ElMessage.error('索引重建状态查询失败，请稍后重试')
+        }
+    )
+}
+
+const startIndexRebuild = () => {
+    ElMessageBox.confirm(
+        '这将清空并重建公开帖子的关键词索引和向量索引，耗时期间搜索可能受到影响，您确定要继续吗？',
+        '重建索引',
+        { confirmButtonText: '开始重建', cancelButtonText: '取消', type: 'warning' }
+    ).then(() => {
+        if(!indexRebuildMounted) return
+        apiAgentIndexRebuild(
+            status => {
+                if(!indexRebuildMounted) return
+                applyIndexRebuildStatus(status)
+                if(indexRebuild.running) {
+                    stopIndexRebuildPolling()
+                    indexRebuildTimer = setInterval(pollIndexRebuildStatus, 1000)
+                }
+            },
+            message => {
+                if(!indexRebuildMounted) return
+                indexRebuild.running = false
+                ElMessage.error(message || '索引重建启动失败')
+            },
+            () => {
+                if(!indexRebuildMounted) return
+                indexRebuild.running = false
+                ElMessage.error('索引重建启动失败，请稍后重试')
+            }
+        )
+    }).catch(() => {})
+}
+
 const refreshList = () => {
     apiForumTopicAllList(topicList.page, topicList.size, keyword.value, data => {
         topicList.list = data.list;
@@ -79,6 +157,10 @@ const refreshList = () => {
 }
 
 watchEffect(() => refreshList())
+onBeforeUnmount(() => {
+    indexRebuildMounted = false
+    stopIndexRebuildPolling()
+})
 </script>
 
 <template>
@@ -92,7 +174,22 @@ watchEffect(() => refreshList())
                 在这里管理论坛所有的帖子，并对帖子进行各种操作和管理
             </div>
         </div>
-        <div>
+        <div class="forum-admin-actions">
+            <div class="index-rebuild-control">
+                <el-button data-test="rebuild-index"
+                           type="warning"
+                           :loading="indexRebuild.running"
+                           :disabled="indexRebuild.running"
+                           @click="startIndexRebuild">
+                    重建索引
+                </el-button>
+                <span v-if="indexRebuild.running || indexRebuild.total > 0"
+                      class="index-rebuild-status"
+                      role="status">
+                    {{ indexRebuild.processed }}/{{ indexRebuild.total }}
+                    <span v-if="indexRebuild.failed > 0">，失败 {{ indexRebuild.failed }}</span>
+                </span>
+            </div>
             <el-input :prefix-icon="Search" placeholder="搜索帖子标题..."
                       clearable @clear="keyword = ''"
                       @keydown.enter="keyword = searchText"
@@ -178,6 +275,28 @@ watchEffect(() => refreshList())
     display: flex;
     justify-content: space-between;
     align-items: center;
+}
+
+.forum-admin-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.index-rebuild-control {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.index-rebuild-status {
+    color: #7a8581;
+    font-size: 13px;
+    white-space: nowrap;
 }
 
 .title {
