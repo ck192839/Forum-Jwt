@@ -5,43 +5,32 @@ import com.example.entity.dto.Interact;
 import com.example.entity.dto.Topic;
 import com.example.entity.vo.response.TopicVO;
 import org.apache.ibatis.annotations.Delete;
+import org.apache.ibatis.annotations.DeleteProvider;
 import org.apache.ibatis.annotations.Insert;
+import org.apache.ibatis.annotations.InsertProvider;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.SelectProvider;
+import org.apache.ibatis.annotations.Param;
 
 import java.util.List;
 
 @Mapper
 public interface TopicMapper extends BaseMapper<Topic> {
-        @Insert("""
-            <script>
-                insert ignore into db_topic_interact_${type} values
-                <foreach collection ="interacts" item="item" separator =",">
-                    (#{item.tid}, #{item.uid}, #{item.time})
-                </foreach>
-            </script>
-            """)
-        void addInteract(List<Interact> interacts, String type);
+        @InsertProvider(type = TopicSqlProvider.class, method = "addInteract")
+        void addInteract(@Param("interacts") List<Interact> interacts,
+                         @Param("type") InteractType type);
 
-        @Delete("""
-            <script>
-                delete from db_topic_interact_${type} where
-                <foreach collection="interacts" item="item" separator=" or ">
-                    (tid = #{item.tid} and uid = #{item.uid})
-                </foreach>
-            </script>
-            """)
-        int deleteInteract(List<Interact> interacts, String type);
+        @DeleteProvider(type = TopicSqlProvider.class, method = "deleteInteract")
+        int deleteInteract(@Param("interacts") List<Interact> interacts,
+                           @Param("type") InteractType type);
 
-        @Select("""
-            select count(*) from db_topic_interact_${type} where tid = #{tid}
-            """)
-        int interactCount(int tid, String type);//获取帖子的互动次数
+        @SelectProvider(type = TopicSqlProvider.class, method = "interactCount")
+        int interactCount(@Param("tid") int tid, @Param("type") InteractType type);//获取帖子的互动次数
 
-        @Select("""
-            select count(*) from db_topic_interact_${type} where tid = #{tid} and uid = #{uid}
-            """)
-        int userInteractCount(int tid, int uid, String type);//获取用户对帖子的互动
+        @SelectProvider(type = TopicSqlProvider.class, method = "userInteractCount")
+        int userInteractCount(@Param("tid") int tid, @Param("uid") int uid,
+                              @Param("type") InteractType type);//获取用户对帖子的互动
 
         @Select("""
             select * from db_topic_interact_collect right join db_topic on tid = db_topic.id

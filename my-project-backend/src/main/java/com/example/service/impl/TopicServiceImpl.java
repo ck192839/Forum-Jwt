@@ -404,6 +404,7 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
     @Override
     public void interact(Interact interact, boolean state) {// 帖子交互写入缓存，state=执行/取消
         String type = interact.getType();
+        InteractType.parse(type);
         synchronized (type.intern()) {
             template.opsForHash().put(type, interact.toKey(), Boolean.toString(state));
             this.saveInteractSchedule(type);
@@ -452,11 +453,12 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
     }
 
     private boolean hasInteract(int tid, int uid, String type) {// 判断用户是否对帖子有互动
+        InteractType interactType = InteractType.parse(type);
         String key = tid + ":" + uid;
         if (template.opsForHash().hasKey(type, key)) {
             return Boolean.parseBoolean(template.opsForHash().entries(type).get(key).toString());
         }
-        return baseMapper.userInteractCount(tid, uid, type) > 0;
+        return baseMapper.userInteractCount(tid, uid, interactType) > 0;
     }
 
     private final Map<String, Boolean> state = new HashMap<>();
@@ -473,6 +475,7 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
     }
 
     private void saveInteract(String type) {// 从缓存中获取帖子交互并保存到数据库
+        InteractType interactType = InteractType.parse(type);
         synchronized (type.intern()) {
             List<Interact> check = new LinkedList<>();// 添加的交互
             List<Interact> uncheck = new LinkedList<>();// 取消交互
@@ -484,11 +487,11 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
             });
 
             if (!check.isEmpty()) {
-                baseMapper.addInteract(check, type);
+                baseMapper.addInteract(check, interactType);
             }
 
             if (!uncheck.isEmpty()) {
-                baseMapper.deleteInteract(uncheck, type);
+                baseMapper.deleteInteract(uncheck, interactType);
             }
             template.delete(type);// 删除缓存
         }
@@ -508,8 +511,8 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
         TopicPreviewVO vo = new TopicPreviewVO();
         BeanUtils.copyProperties(accountMapper.selectById(topic.getUid()), vo);
         BeanUtils.copyProperties(topic, vo);
-        vo.setLike(baseMapper.interactCount(topic.getId(), "like"));
-        vo.setCollect(baseMapper.interactCount(topic.getId(), "collect"));
+        vo.setLike(baseMapper.interactCount(topic.getId(), InteractType.LIKE));
+        vo.setCollect(baseMapper.interactCount(topic.getId(), InteractType.COLLECT));
         List<String> images = new ArrayList<>();
         StringBuilder previewText = new StringBuilder();
         if (topic.getContent() != null) {
