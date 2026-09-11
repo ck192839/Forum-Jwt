@@ -3,18 +3,18 @@ package com.example.search;
 import java.util.List;
 
 /**
- * 混合检索服务：关键词+向量双路检索的融合实现。
+ * 混合检索服务：关键词+向量双路检索的融合实现，站内搜索（/search-topic）的数据源。
  *
  * 流程：
  * 1. 关键词检索（Elasticsearch keyword 字段）取前 20
  * 2. 向量检索（ES vector + Bailian embedding）取前 20；失败时降级为空（不影响关键词）
- * 3. ReciprocalRankFusion 融合两条结果 → 去重 → 返回前 6
+ * 3. ReciprocalRankFusion 融合两条结果 → 去重 → 返回前 limit 条
  *
  * 设计取舍：向量检索是「加分项」——它挂掉时纯关键词兜底仍可用，
- * 保证混合检索链路的高可用。
+ * 保证站内搜索和混合检索链路的高可用。
  */
 public class HybridTopicSearchService {
-    private static final int RESULT_LIMIT = 6; // 最终返回条数（引用最多 6 条）
+    private static final int DEFAULT_RESULT_LIMIT = 6; // 默认最终返回条数（引用最多 6 条）
 
     private final KeywordTopicRetriever keywordRetriever; // 关键词检索
     private final VectorTopicRetriever vectorRetriever; // 向量检索
@@ -26,8 +26,13 @@ public class HybridTopicSearchService {
         this.vectorRetriever = vectorRetriever;
     }
 
-    /** 执行混合检索并融合排序。 */
+    /** 执行混合检索并融合排序，返回默认条数。 */
     public List<RankedTopic> search(String query) {
+        return search(query, DEFAULT_RESULT_LIMIT);
+    }
+
+    /** 执行混合检索并融合排序，limit 指定最终返回条数。 */
+    public List<RankedTopic> search(String query, int limit) {
         List<TopicSearchHit> keywordHits = keywordRetriever.search(query);
         List<TopicSearchHit> vectorHits;
         try {
@@ -36,6 +41,6 @@ public class HybridTopicSearchService {
             // 向量检索不可用（ES 向量索引缺失/embedding 服务异常）→ 降级为纯关键词
             vectorHits = List.of();
         }
-        return ReciprocalRankFusion.merge(keywordHits, vectorHits, RESULT_LIMIT);
+        return ReciprocalRankFusion.merge(keywordHits, vectorHits, limit);
     }
 }

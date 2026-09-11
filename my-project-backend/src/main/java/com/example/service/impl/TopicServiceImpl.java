@@ -5,16 +5,17 @@ import com.alibaba.fastjson2.JSONObject;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.example.search.HybridTopicSearchService;
+import com.example.search.RankedTopic;
+import com.example.search.TopicSearchHit;
 import com.example.search.index.TopicIndexEventPublisher;
 import com.example.entity.dto.*;
-import com.example.entity.es.TopicDocument;
 import com.example.entity.vo.request.AddCommentVO;
 import com.example.entity.vo.request.TopicCreateVO;
 import com.example.entity.vo.request.TopicTypeCreateVO;
 import com.example.entity.vo.request.TopicUpdateVO;
 import com.example.entity.vo.response.*;
 import com.example.mapper.*;
-import com.example.repository.TopicRepository;
 import com.example.service.NotificationService;
 import com.example.service.TopicService;
 import com.example.utils.CacheUtils;
@@ -25,8 +26,6 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.Resource;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.Lazy;
-import org.springframework.data.elasticsearch.core.SearchHit;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -70,9 +69,8 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
     @Resource
     ProhibitedUtils prohibitedUtils;
 
-    @Lazy
     @Resource
-    TopicRepository topicRepository;
+    HybridTopicSearchService hybridSearchService;
 
     @Resource
     TopicIndexEventPublisher topicIndexEventPublisher;
@@ -426,6 +424,9 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
     @Value("${search.db:false}")
     private boolean dbSearch;
 
+    /** 站内搜索返回条数上限。 */
+    private static final int SEARCH_RESULT_LIMIT = 20;
+
     @Override
     public List<TopicSearchVO> searchTopic(String keyword) {
         if (dbSearch) {
@@ -443,13 +444,27 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
                 return vo;
             }).toList();
         }
-        List<SearchHit<TopicDocument>> list = topicRepository.findByTitleOrIntro(keyword);
-        return list.stream().map(item -> {
+        // 混合检索：关键词+向量双路 RRF 融合；向量路不可用时自动降级为纯关键词。
+        List<RankedTopic> list = hybridSearchService.search(keyword, SEARCH_RESULT_LIMIT);
+        return list.stream().map(ranked -> {
+            TopicSearchHit hit = ranked.topic();
             TopicSearchVO vo = new TopicSearchVO();
-            BeanUtils.copyProperties(item.getContent(), vo);
-            vo.setHighlight(item.getHighlightFields());
+            vo.setId(hit.topicId());
+            vo.setTitle(hit.title());
+            vo.setIntro(excerptForDisplay(hit));
+            vo.setType(hit.topicTypeId());
+            vo.setHighlight(hit.highlight());
             return vo;
         }).toList();
+    }
+
+    /** 无高亮片段时的回退摘要：向量路命中的是正文块（最长 2400 字符），截断到 200 字符展示。 */
+    private String excerptForDisplay(TopicSearchHit hit) {
+        String excerpt = hit.excerpt();
+        if (excerpt == null || excerpt.length() <= 200) {
+            return excerpt;
+        }
+        return excerpt.substring(0, 200) + "…";
     }
 
     private boolean hasInteract(int tid, int uid, String type) {// 判断用户是否对帖子有互动

@@ -12,6 +12,8 @@ import org.springframework.data.elasticsearch.core.query.highlight.HighlightFiel
 import org.springframework.data.elasticsearch.core.query.highlight.HighlightParameters;
 
 import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.List;
 
 /**
@@ -73,12 +75,22 @@ public class ElasticsearchKeywordTopicRetriever implements KeywordTopicRetriever
         if (excerpt == null || excerpt.isBlank()) {
             excerpt = topic.getIntro();
         }
+        Map<String, List<String>> highlight = new HashMap<>();
+        List<String> titleFragments = hit.getHighlightField("title");
+        if (!titleFragments.isEmpty()) {
+            highlight.put("title", titleFragments);
+        }
+        List<String> introFragments = hit.getHighlightField("intro");
+        if (!introFragments.isEmpty()) {
+            highlight.put("intro", introFragments);
+        }
         return new TopicSearchHit(
                 topic.getId(),
                 topic.getTitle(),
                 excerpt,
                 topic.getType(),
-                time(topic.getTime()));
+                time(topic.getTime()),
+                highlight);
     }
 
     /** match_phrase 子查询：短语匹配（与站内搜索的 @Query 语义一致）。 */

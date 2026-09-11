@@ -23,7 +23,7 @@ import java.util.concurrent.Executors;
  *
  * 组装两条链路：
  * 1. 检索链路：KeywordTopicRetriever + VectorTopicRetriever →
- * HybridTopicSearchService（关键词+向量混合检索，由检索质量回归门禁保护）
+ * HybridTopicSearchService（关键词+向量混合检索，站内搜索数据源，由检索质量回归门禁保护）
  * 2. 索引链路：TopicChunker → TopicVectorIndexer →
  * TopicIndexRebuildService（帖子向量索引的重建/写入）
  */
@@ -41,8 +41,8 @@ public class SearchConfiguration {
 
     /**
      * 关键词检索实现：基于 Elasticsearch 的 NativeQuery + highlight 片段。
-     * 与站内搜索走的 TopicRepository 分离：这里多一层措辞容错，
-     * 并返回命中片段供上层使用。
+     * 站内搜索（/search-topic）的关键词路：多一层措辞容错，
+     * 并返回命中片段供展示层高亮。
      */
     @Bean
     KeywordTopicRetriever keywordTopicRetriever(ElasticsearchOperations elasticsearchOperations) {
