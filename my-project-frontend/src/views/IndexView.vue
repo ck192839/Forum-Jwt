@@ -18,7 +18,6 @@ import {notificationOpenRequest} from "@/components/notificationBridge";
 import TopicTag from "@/components/TopicTag.vue";
 import {useStore} from "@/store";
 import router from "@/router";
-import AgentAssistant from "@/agent/AgentAssistant.vue";
 
 const store = useStore()
 
@@ -225,7 +224,6 @@ apiForumTypes(data => {
                 </el-main>
             </el-container>
         </el-container>
-        <agent-assistant/>
     </div>
 </template>
 

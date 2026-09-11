@@ -6,11 +6,11 @@ const post = vi.hoisted(() => vi.fn())
 vi.mock('@/net', () => ({ get, post }))
 
 import {
-  apiAgentIndexRebuild,
-  apiAgentIndexRebuildStatus
+  apiSearchIndexRebuild,
+  apiSearchIndexRebuildStatus
 } from './forum'
 
-describe('agent index API', () => {
+describe('search index API', () => {
   beforeEach(() => {
     get.mockReset()
     post.mockReset()
@@ -19,17 +19,17 @@ describe('agent index API', () => {
   test('starts a full index rebuild with POST', () => {
     const success = vi.fn()
 
-    apiAgentIndexRebuild(success)
+    apiSearchIndexRebuild(success)
 
-    expect(post).toHaveBeenCalledWith('/api/admin/agent/index/rebuild', null, success)
+    expect(post).toHaveBeenCalledWith('/api/admin/search/index/rebuild', null, success)
   })
 
   test('loads index rebuild status with GET', () => {
     const success = vi.fn()
 
-    apiAgentIndexRebuildStatus(success)
+    apiSearchIndexRebuildStatus(success)
 
-    expect(get).toHaveBeenCalledWith('/api/admin/agent/index/status', success)
+    expect(get).toHaveBeenCalledWith('/api/admin/search/index/status', success)
   })
 
   test('forwards failure and network error callbacks', () => {
@@ -37,10 +37,10 @@ describe('agent index API', () => {
     const failure = vi.fn()
     const error = vi.fn()
 
-    apiAgentIndexRebuild(success, failure, error)
-    apiAgentIndexRebuildStatus(success, failure, error)
+    apiSearchIndexRebuild(success, failure, error)
+    apiSearchIndexRebuildStatus(success, failure, error)
 
-    expect(post).toHaveBeenCalledWith('/api/admin/agent/index/rebuild', null, success, failure, error)
-    expect(get).toHaveBeenCalledWith('/api/admin/agent/index/status', success, failure, error)
+    expect(post).toHaveBeenCalledWith('/api/admin/search/index/rebuild', null, success, failure, error)
+    expect(get).toHaveBeenCalledWith('/api/admin/search/index/status', success, failure, error)
   })
 })

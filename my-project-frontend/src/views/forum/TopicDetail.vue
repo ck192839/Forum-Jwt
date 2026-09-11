@@ -22,8 +22,6 @@ import {ElMessage, ElMessageBox} from "element-plus";
 import {useStore} from "@/store";
 import TopicEditor from "@/components/TopicEditor.vue";
 import TopicCommentEditor from "@/components/TopicCommentEditor.vue";
-import { editorOpenRequest } from "@/agent/editorBridge";
-import { stableEditorId } from "@/agent/editorIdentity";
 import {
     apiForumCommentDelete,
     apiForumComments,
@@ -46,24 +44,12 @@ const topic = reactive({
     page: 1
 })
 const edit = ref(false)
-watch(editorOpenRequest, request => {
-    if(request && request.editorId === stableEditorId(`topic-${route.params.tid}`)) {
-        edit.value = true
-        editorOpenRequest.value = null
-    }
-}, {immediate: true})
-
 watch(() => route.params.tid, (newTid) => {
     if (!newTid) return
     edit.value = false
     topic.data = null
     topic.comments = null
     init()
-    const request = editorOpenRequest.value
-    if(request && request.editorId === stableEditorId(`topic-${newTid}`)) {
-        edit.value = true
-        editorOpenRequest.value = null
-    }
 })
 const comment = reactive({
     show: false,

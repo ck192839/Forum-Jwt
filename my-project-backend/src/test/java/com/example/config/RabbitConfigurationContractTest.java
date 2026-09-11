@@ -1,6 +1,6 @@
 package com.example.config;
 
-import com.example.agent.index.TopicIndexEventConsumer;
+import com.example.search.index.TopicIndexEventConsumer;
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.amqp.rabbit.retry.RepublishMessageRecoverer;
@@ -21,7 +21,7 @@ class RabbitConfigurationContractTest {
     void topicIndexListenerUsesItsDedicatedContainerFactory() throws Exception {
         Method handle = TopicIndexEventConsumer.class.getMethod(
                 "handle",
-                com.example.agent.index.TopicIndexEvent.class
+                com.example.search.index.TopicIndexEvent.class
         );
 
         RabbitListener listener = handle.getAnnotation(RabbitListener.class);

@@ -22,8 +22,8 @@ import router from "@/router";
 import TopicTag from "@/components/TopicTag.vue";
 import TopicCollectList from "@/components/TopicCollectList.vue";
 import {apiForumTopicList, apiForumTopTopics, apiForumWeather} from "@/net/api/forum";
-import {DEFAULT_LOCATION, requestUserLocation} from "@/agent/location";
-import {editorOpenRequest} from "@/agent/editorBridge";
+import {DEFAULT_LOCATION, requestUserLocation} from "@/editor/location";
+
 
 const store = useStore()
 
@@ -44,13 +44,6 @@ const topics = reactive({
 const collects = ref(false)
 
 watch(() => topics.type, () => resetList(), {immediate: true})
-watch(editorOpenRequest, request => {
-    if(request && (request.editorId == null || request.editorId === 'topic-editor:new-topic')) {
-        editor.value = true
-        editorOpenRequest.value = null
-    }
-}, {immediate: true})
-
 const today = computed(() => {
     const date = new Date()
     return `${date.getFullYear()} 年 ${date.getMonth() + 1} 月 ${date.getDate()} 日`

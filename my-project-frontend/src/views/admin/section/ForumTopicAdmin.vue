@@ -2,8 +2,8 @@
 import {Delete, Hide, Lock, Search, Top, User} from "@element-plus/icons-vue";
 import {ElMessage, ElMessageBox} from "element-plus";
 import {
-    apiAgentIndexRebuild,
-    apiAgentIndexRebuildStatus,
+    apiSearchIndexRebuild,
+    apiSearchIndexRebuildStatus,
     apiForumTopicAllList,
     apiForumTopicDelete,
     apiForumTopicInvisible,
@@ -101,7 +101,7 @@ const applyIndexRebuildStatus = status => {
 }
 
 const pollIndexRebuildStatus = () => {
-    apiAgentIndexRebuildStatus(
+    apiSearchIndexRebuildStatus(
         applyIndexRebuildStatus,
         message => {
             if(!indexRebuildMounted) return
@@ -125,7 +125,7 @@ const startIndexRebuild = () => {
         { confirmButtonText: '开始重建', cancelButtonText: '取消', type: 'warning' }
     ).then(() => {
         if(!indexRebuildMounted) return
-        apiAgentIndexRebuild(
+        apiSearchIndexRebuild(
             status => {
                 if(!indexRebuildMounted) return
                 applyIndexRebuildStatus(status)

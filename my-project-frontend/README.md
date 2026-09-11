@@ -28,7 +28,7 @@ npm run dev
 npm run build
 ```
 
-### Forum Agent End-to-End Tests
+### End-to-End Tests
 
 Install the Chromium revision pinned by `@playwright/test` after installing dependencies, then run the desktop suite:
 

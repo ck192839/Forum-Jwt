@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 
-const apiAgentIndexRebuild = vi.hoisted(() => vi.fn())
-const apiAgentIndexRebuildStatus = vi.hoisted(() => vi.fn())
+const apiSearchIndexRebuild = vi.hoisted(() => vi.fn())
+const apiSearchIndexRebuildStatus = vi.hoisted(() => vi.fn())
 const apiForumTopicAllList = vi.hoisted(() => vi.fn())
 const confirm = vi.hoisted(() => vi.fn())
 const success = vi.hoisted(() => vi.fn())
@@ -10,8 +10,8 @@ const warning = vi.hoisted(() => vi.fn())
 const error = vi.hoisted(() => vi.fn())
 
 vi.mock('@/net/api/forum', () => ({
-  apiAgentIndexRebuild,
-  apiAgentIndexRebuildStatus,
+  apiSearchIndexRebuild,
+  apiSearchIndexRebuildStatus,
   apiForumTopicAllList,
   apiForumTopicDelete: vi.fn(),
   apiForumTopicInvisible: vi.fn(),
@@ -56,8 +56,8 @@ const mountPage = () => mount(ForumTopicAdmin, {
 describe('ForumTopicAdmin index rebuild', () => {
   beforeEach(() => {
     vi.useFakeTimers()
-    apiAgentIndexRebuild.mockReset()
-    apiAgentIndexRebuildStatus.mockReset()
+    apiSearchIndexRebuild.mockReset()
+    apiSearchIndexRebuildStatus.mockReset()
     apiForumTopicAllList.mockReset().mockImplementation((_page, _size, _keyword, callback) => callback({ list: [], total: 0, blocked: 0 }))
     confirm.mockReset()
     success.mockReset()
@@ -76,13 +76,13 @@ describe('ForumTopicAdmin index rebuild', () => {
     await wrapper.get('[data-test="rebuild-index"]').trigger('click')
     await flushPromises()
 
-    expect(apiAgentIndexRebuild).not.toHaveBeenCalled()
+    expect(apiSearchIndexRebuild).not.toHaveBeenCalled()
   })
 
   test('polls progress and restores the button after completion', async () => {
     confirm.mockResolvedValueOnce()
-    apiAgentIndexRebuild.mockImplementation(callback => callback({ running: true, total: 2, processed: 0, failed: 0 }))
-    apiAgentIndexRebuildStatus
+    apiSearchIndexRebuild.mockImplementation(callback => callback({ running: true, total: 2, processed: 0, failed: 0 }))
+    apiSearchIndexRebuildStatus
       .mockImplementationOnce(callback => callback({ running: true, total: 2, processed: 1, failed: 0 }))
       .mockImplementationOnce(callback => callback({ running: false, total: 2, processed: 2, failed: 0 }))
     const wrapper = mountPage()
@@ -104,7 +104,7 @@ describe('ForumTopicAdmin index rebuild', () => {
 
   test('clears polling when the page is unmounted', async () => {
     confirm.mockResolvedValueOnce()
-    apiAgentIndexRebuild.mockImplementation(callback => callback({ running: true, total: 1, processed: 0, failed: 0 }))
+    apiSearchIndexRebuild.mockImplementation(callback => callback({ running: true, total: 1, processed: 0, failed: 0 }))
     const wrapper = mountPage()
 
     await wrapper.get('[data-test="rebuild-index"]').trigger('click')
@@ -112,12 +112,12 @@ describe('ForumTopicAdmin index rebuild', () => {
     wrapper.unmount()
     await vi.advanceTimersByTimeAsync(2000)
 
-    expect(apiAgentIndexRebuildStatus).not.toHaveBeenCalled()
+    expect(apiSearchIndexRebuildStatus).not.toHaveBeenCalled()
   })
 
   test('restores the button and reports a conflict when a rebuild is already running', async () => {
     confirm.mockResolvedValueOnce()
-    apiAgentIndexRebuild.mockImplementation((_success, failure) => failure('已有重建任务正在运行'))
+    apiSearchIndexRebuild.mockImplementation((_success, failure) => failure('已有重建任务正在运行'))
     const wrapper = mountPage()
 
     await wrapper.get('[data-test="rebuild-index"]').trigger('click')
@@ -129,8 +129,8 @@ describe('ForumTopicAdmin index rebuild', () => {
 
   test('reports partial failures when the rebuild completes', async () => {
     confirm.mockResolvedValueOnce()
-    apiAgentIndexRebuild.mockImplementation(callback => callback({ running: true, total: 1, processed: 0, failed: 0 }))
-    apiAgentIndexRebuildStatus.mockImplementationOnce(callback => callback({ running: false, total: 1, processed: 0, failed: 1 }))
+    apiSearchIndexRebuild.mockImplementation(callback => callback({ running: true, total: 1, processed: 0, failed: 0 }))
+    apiSearchIndexRebuildStatus.mockImplementationOnce(callback => callback({ running: false, total: 1, processed: 0, failed: 1 }))
     const wrapper = mountPage()
 
     await wrapper.get('[data-test="rebuild-index"]').trigger('click')

@@ -4,11 +4,11 @@
 
 ## 项目概述
 
-一个前后端分离的论坛系统,并内置基于 Spring AI 的论坛智能体(ReAct Agent,支持检索、发帖草稿等工具调用)。
+一个前后端分离的论坛系统,内置基于 Elasticsearch 的站内搜索与关键词+向量混合检索(RRF 融合),帖子索引经 RabbitMQ 异步写入。
 
 | 模块 | 技术栈 |
 | --- | --- |
-| `my-project-backend` | Java 17, Spring Boot 3.5, Spring Security + JWT (java-jwt), MyBatis-Plus, Flyway, Spring AI (DeepSeek / OpenAI + Elasticsearch 向量存储), Redis, RabbitMQ, MinIO, Mail |
+| `my-project-backend` | Java 17, Spring Boot 3.5, Spring Security + JWT (java-jwt), MyBatis-Plus, Flyway, Spring AI (OpenAI embedding + Elasticsearch 向量存储), Redis, RabbitMQ, MinIO, Mail |
 | `my-project-frontend` | Vue 3 (Composition API), Vite 4, Element Plus 2.11, Pinia, Vue Router, axios, Quill 富文本编辑器, Vitest + Playwright |
 
 ## 仓库结构
@@ -16,9 +16,9 @@
 ```
 my-project/
 ├── my-project-backend/          # Spring Boot 后端
-│   ├── pom.xml                  # Maven 配置(含 agent-eval profile)
+│   ├── pom.xml                  # Maven 配置(含 search-eval profile)
 │   └── src/main/java/com/example/
-│       ├── agent/               # 论坛智能体模块(api/core/tool/session/search/index/run/config)
+│       ├── search/              # ES 检索与索引模块(关键词/向量检索、RRF 融合、MQ 索引管道、重建)
 │       ├── controller/          # REST 控制器(admin/ 子包为管理端,exception/ 为全局异常处理)
 │       ├── service/impl/        # 业务逻辑(接口 + 实现)
 │       ├── mapper/              # MyBatis-Plus Mapper
@@ -34,7 +34,7 @@ my-project/
 │       └── es/                  # Elasticsearch 索引映射
 ├── my-project-frontend/         # Vue 3 前端
 │   ├── src/
-│   │   ├── agent/               # 智能体前端(会话 UI、草稿应用等)
+│   │   ├── editor/              # 编辑器公共基建(富文本 delta 序列化、定位上下文)
 │   │   ├── views/               # 页面(forum / admin / welcome / settings 子目录)
 │   │   ├── components/          # 组件(命名风格 XxxYyy.vue)
 │   │   ├── net/                 # axios 封装(访问令牌存于 localStorage,见 index.js)
@@ -71,7 +71,7 @@ my-project/
 ./mvnw spring-boot:run            # 启动后端(Windows 用 mvnw.cmd)
 ./mvnw test                       # 运行单元/集成测试(Testcontainers 需要 Docker)
 ./mvnw verify                     # 完整构建 + 测试
-./mvnw verify -Pagent-eval        # 运行智能体评估测试(*EvaluationIT.java,由 failsafe 执行)
+./mvnw verify -Psearch-eval       # 运行检索质量评估测试(*EvaluationIT.java,由 failsafe 执行)
 ./mvnw clean package              # 打包
 ```
 
@@ -89,7 +89,7 @@ npm run test:e2e                  # Playwright 端到端测试
 ## 数据库与迁移
 
 - 使用 **Flyway** 管理数据库结构,脚本位于 `src/main/resources/db/migration/`。
-- 修改表结构时**新增** `V<N>__描述.sql` 迁移脚本(当前最新为 `V3__add_agent_draft_target_editor.sql`),不要修改已应用的旧脚本。
+- 修改表结构时**新增** `V<N>__描述.sql` 迁移脚本(当前最新为 `V5__drop_agent_tables.sql`),不要修改已应用的旧脚本。
 - Elasticsearch 索引映射在 `src/main/resources/es/`,与 `entity/es/` 下的文档类保持一致。
 
 ## 代码约定
@@ -112,7 +112,7 @@ npm run test:e2e                  # Playwright 端到端测试
 ## 测试要求
 
 - 后端集成测试基于 Testcontainers(MySQL/RabbitMQ/ES),运行前确认 Docker 已启动;无 Docker 时只跑纯单元测试并在结果中说明。
-- 智能体评估类测试命名为 `*EvaluationIT.java`,由 `agent-eval` profile 的 failsafe 插件执行,常规 `mvnw test` 不会运行它们。
+- 检索质量评估测试(RetrievalRegressionEvaluationIT)由 `search-eval` profile 的 failsafe 插件执行,常规 `mvnw test` 不会运行它。
 - 前端 e2e 测试在 `e2e/` 下,CI 中必须先执行 `npm run test:e2e:install`;本地想复用已有 Chrome 可设置 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`。
 - 提交前至少运行:`./mvnw test`(改了后端)与 `npm run test`(改了前端),涉及其它范围再跑对应 e2e。
 

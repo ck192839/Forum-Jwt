@@ -50,13 +50,13 @@ export const apiForumCollectDelete = (tid, success) =>
 export const apiForumTopicAllList = (page, size, keyword, success) =>
     get(`/api/admin/forum/list?page=${page}&size=${size}&keyword=${keyword}`, success)
 
-export const apiAgentIndexRebuild = (success, failure, error) => failure
-    ? post('/api/admin/agent/index/rebuild', null, success, failure, error)
-    : post('/api/admin/agent/index/rebuild', null, success)
+export const apiSearchIndexRebuild = (success, failure, error) => failure
+    ? post('/api/admin/search/index/rebuild', null, success, failure, error)
+    : post('/api/admin/search/index/rebuild', null, success)
 
-export const apiAgentIndexRebuildStatus = (success, failure, error) => failure
-    ? get('/api/admin/agent/index/status', success, failure, error)
-    : get('/api/admin/agent/index/status', success)
+export const apiSearchIndexRebuildStatus = (success, failure, error) => failure
+    ? get('/api/admin/search/index/status', success, failure, error)
+    : get('/api/admin/search/index/status', success)
 
 export const apiForumTopicDelete = (tid, success) =>
     get(`/api/admin/forum/delete?tid=${tid}`, success)

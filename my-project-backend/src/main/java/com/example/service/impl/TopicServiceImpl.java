@@ -5,7 +5,7 @@ import com.alibaba.fastjson2.JSONObject;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
-import com.example.agent.index.TopicIndexEventPublisher;
+import com.example.search.index.TopicIndexEventPublisher;
 import com.example.entity.dto.*;
 import com.example.entity.es.TopicDocument;
 import com.example.entity.vo.request.AddCommentVO;
