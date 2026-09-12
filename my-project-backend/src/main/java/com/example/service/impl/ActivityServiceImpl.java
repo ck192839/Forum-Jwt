@@ -2,9 +2,11 @@ package com.example.service.impl;
 
 import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.example.entity.dto.Activity;
 import com.example.entity.dto.ActivityGrabEvent;
 import com.example.entity.dto.ActivityOrder;
+import com.example.entity.vo.request.ActivityAdminSaveVO;
 import com.example.entity.vo.response.ActivityOrderVO;
 import com.example.entity.vo.response.ActivityVO;
 import com.example.mapper.ActivityMapper;
@@ -63,6 +65,7 @@ public class ActivityServiceImpl implements ActivityService {
         List<ActivityVO> cached = cacheUtils.takeListFromCache(Const.ACTIVITY_LIST_CACHE, ActivityVO.class);
         if (cached != null) return cached;
         List<ActivityVO> list = activityMapper.selectList(Wrappers.<Activity>query()
+                        .eq("status", Activity.STATUS_ON)
                         .orderByAsc("grab_end_time")).stream()
                 .map(this::toVO)
                 .toList();
@@ -75,6 +78,9 @@ public class ActivityServiceImpl implements ActivityService {
         Activity activity = loadActivityForGrab(activityId);
         if (activity == null) {
             return GrabResult.reject(400, "活动不存在");
+        }
+        if (activity.getStatus() == null || activity.getStatus() != Activity.STATUS_ON) {
+            return GrabResult.reject(400, "活动已下架");
         }
         Date now = new Date();
         if (now.before(activity.getGrabStartTime()) || now.after(activity.getGrabEndTime())) {
@@ -127,6 +133,73 @@ public class ActivityServiceImpl implements ActivityService {
             vo.setCreateTime(order.getCreateTime());
             return vo;
         }).toList();
+    }
+
+    @Override
+    public Page<Activity> adminList(int page, int size, String keyword) {
+        return activityMapper.selectPage(new Page<>(page, size), Wrappers.<Activity>query()
+                .like(keyword != null && !keyword.isBlank(), "title", keyword)
+                .orderByDesc("id"));
+    }
+
+    @Override
+    public String adminSave(ActivityAdminSaveVO vo) {
+        if (!vo.getGrabStartTime().before(vo.getGrabEndTime())) {
+            return "报名开始时间必须早于报名截止时间";
+        }
+        if (vo.getActivityTime().before(vo.getGrabEndTime())) {
+            return "活动时间应晚于报名截止时间";
+        }
+        boolean isNew = vo.getId() == null;
+        Activity activity;
+        if (isNew) {
+            activity = new Activity();
+            activity.setStatus(Activity.STATUS_ON);
+            activity.setGrabbed(0);
+        } else {
+            activity = activityMapper.selectById(vo.getId());
+            if (activity == null) return "活动不存在";
+        }
+        activity.setTitle(vo.getTitle());
+        activity.setDescription(vo.getDescription());
+        activity.setLocation(vo.getLocation());
+        activity.setActivityTime(vo.getActivityTime());
+        activity.setTotalStock(vo.getTotalStock());
+        activity.setGrabStartTime(vo.getGrabStartTime());
+        activity.setGrabEndTime(vo.getGrabEndTime());
+        if (isNew) activityMapper.insert(activity);
+        else activityMapper.updateById(activity);
+        // 名额与窗口可能变化：库存键作废后以新配置重新懒加载，配置缓存立即失效
+        invalidateActivityCaches(activity.getId());
+        return null;
+    }
+
+    @Override
+    public String adminDelete(int id) {
+        Long orders = activityOrderMapper.selectCount(Wrappers.<ActivityOrder>query()
+                .eq("activity_id", id));
+        if (orders != null && orders > 0) {
+            return "该活动已有报名记录，不能删除";
+        }
+        activityMapper.deleteById(id);
+        invalidateActivityCaches(id);
+        return null;
+    }
+
+    @Override
+    public void adminSetStatus(int id, boolean on) {
+        Activity activity = activityMapper.selectById(id);
+        if (activity == null) return;
+        activity.setStatus(on ? Activity.STATUS_ON : Activity.STATUS_OFF);
+        activityMapper.updateById(activity);
+        invalidateActivityCaches(id);
+    }
+
+    /** 管理端变更后统一失效：用户列表缓存、报名热路径配置缓存、库存键（以新配置重新懒加载）。 */
+    private void invalidateActivityCaches(int activityId) {
+        cacheUtils.deleteCache(Const.ACTIVITY_LIST_CACHE);
+        template.delete(Const.ACTIVITY_CONFIG_CACHE + activityId);
+        template.delete(Const.ACTIVITY_STOCK + activityId);
     }
 
     /** 重复报名的幂等响应：返回已有订单的当前状态，而不是报错。 */

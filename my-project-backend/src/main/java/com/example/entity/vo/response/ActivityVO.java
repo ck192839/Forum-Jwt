@@ -15,4 +15,6 @@ public class ActivityVO {
     int grabbed;
     Date grabStartTime;
     Date grabEndTime;
+    /** 1=上架 0=下架（仅管理端列表使用，用户侧列表只返回上架活动） */
+    int status;
 }

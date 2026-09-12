@@ -4,6 +4,7 @@ import com.alibaba.fastjson2.JSON;
 import com.example.entity.dto.Activity;
 import com.example.entity.dto.ActivityGrabEvent;
 import com.example.entity.dto.ActivityOrder;
+import com.example.entity.vo.request.ActivityAdminSaveVO;
 import com.example.mapper.ActivityMapper;
 import com.example.mapper.ActivityOrderMapper;
 import com.example.service.ActivityService.GrabResult;
@@ -21,10 +22,12 @@ import org.springframework.dao.QueryTimeoutException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 
+import java.io.Serializable;
 import java.util.Date;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -91,6 +94,7 @@ class ActivityServiceImplTest {
         activity.setGrabbed(3);
         activity.setGrabStartTime(new Date(System.currentTimeMillis() - 3600_000));
         activity.setGrabEndTime(new Date(System.currentTimeMillis() + 3600_000 * 24));
+        activity.setStatus(Activity.STATUS_ON);
         return activity;
     }
 
@@ -246,5 +250,71 @@ class ActivityServiceImplTest {
         assertEquals(200, result.code());
         assertEventPublished();
         verify(activityMapper).selectById(ACTIVITY_ID);
+    }
+
+
+    @Test
+    void offShelfActivityIsRejectedBeforeAnythingElse() {
+        Activity activity = openActivity();
+        activity.setStatus(Activity.STATUS_OFF);
+        when(activityMapper.selectById(ACTIVITY_ID)).thenReturn(activity);
+
+        GrabResult result = service.grab(UID, ACTIVITY_ID);
+
+        assertEquals(400, result.code());
+        assertTrue(result.message().contains("已下架"));
+        verify(rabbitTemplate, never()).convertAndSend(anyString(), any(Object.class), any(CorrelationData.class));
+    }
+
+    @Test
+    void adminSaveRejectsInvertedGrabWindow() {
+        ActivityAdminSaveVO vo = new ActivityAdminSaveVO();
+        vo.setTitle("活动");
+        vo.setDescription("描述");
+        vo.setLocation("地点");
+        vo.setActivityTime(new Date(System.currentTimeMillis() + 86400_000));
+        vo.setTotalStock(10);
+        vo.setGrabStartTime(new Date(System.currentTimeMillis() + 7200_000));
+        vo.setGrabEndTime(new Date(System.currentTimeMillis() + 3600_000));
+
+        String error = service.adminSave(vo);
+
+        assertTrue(error != null && error.contains("早于"));
+        verify(activityMapper, never()).insert(any(Activity.class));
+    }
+
+    @Test
+    void adminSaveCreatesActivityAndInvalidatesCaches() {
+        ActivityAdminSaveVO vo = new ActivityAdminSaveVO();
+        vo.setTitle("活动");
+        vo.setDescription("描述");
+        vo.setLocation("地点");
+        vo.setActivityTime(new Date(System.currentTimeMillis() + 86400_000));
+        vo.setTotalStock(10);
+        vo.setGrabStartTime(new Date(System.currentTimeMillis() - 3600_000));
+        vo.setGrabEndTime(new Date(System.currentTimeMillis() + 3600_000));
+
+        // 模拟数据库自增 id 回填（MyBatis-Plus insert 后实体 id 非空）
+        doAnswer(invocation -> {
+            invocation.getArgument(0, Activity.class).setId(5);
+            return 1;
+        }).when(activityMapper).insert(any(Activity.class));
+
+        String error = service.adminSave(vo);
+
+        assertNull(error);
+        verify(activityMapper).insert(any(Activity.class));
+        verify(template).delete(Const.ACTIVITY_CONFIG_CACHE + 5);
+        verify(template).delete(Const.ACTIVITY_STOCK + 5);
+    }
+
+    @Test
+    void adminDeleteIsBlockedWhenOrdersExist() {
+        when(activityOrderMapper.selectCount(any())).thenReturn(3L);
+
+        String error = service.adminDelete(ACTIVITY_ID);
+
+        assertTrue(error != null && error.contains("不能删除"));
+        verify(activityMapper, never()).deleteById(any(Serializable.class));
     }
 }

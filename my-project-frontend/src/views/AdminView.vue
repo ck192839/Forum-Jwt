@@ -1,5 +1,6 @@
 <script setup>
 import {
+    AlarmClock,
     ChatDotSquare,
     HomeFilled,
     Message,
@@ -25,6 +26,7 @@ const navigation = [
         items: [
             {title: '用户管理', icon: User, index: '/admin/user'},
             {title: '帖子管理', icon: ChatDotSquare, index: '/admin/forum'},
+            {title: '活动管理', icon: AlarmClock, index: '/admin/activity'},
             {title: '邮件记录', icon: Message, index: '/admin/email'}
         ]
     }

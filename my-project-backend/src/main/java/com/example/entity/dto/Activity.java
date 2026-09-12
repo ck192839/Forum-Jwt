@@ -25,4 +25,9 @@ public class Activity {
     Date grabStartTime;
     Date grabEndTime;
     Date createTime;
+    /** 1=上架 0=下架（管理端控制，用户侧列表与报名只对上架活动生效） */
+    Integer status;
+
+    public static final int STATUS_ON = 1;
+    public static final int STATUS_OFF = 0;
 }
