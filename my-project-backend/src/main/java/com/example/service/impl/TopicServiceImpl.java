@@ -29,6 +29,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.*;
 import java.util.concurrent.Executors;
@@ -75,10 +77,14 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
     @Resource
     TopicIndexEventPublisher topicIndexEventPublisher;
 
-    private Set<Integer> types = null;
+    private volatile Set<Integer> types = null;
 
     @PostConstruct
     private void initTypes() {// 只获取所有主题类型的id
+        refreshTypes();
+    }
+
+    private void refreshTypes() {// 类型增删后整体重建校验缓存
         types = this.listTypes()
                 .stream()
                 .map(TopicType::getId)
@@ -105,6 +111,18 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
             List<Topic> list = baseMapper.selectList(Wrappers.<Topic>query().eq("type", type.getId()));
             list.forEach(topic -> deleteTopic(topic.getId()));
         }
+        // 回滚时不能刷新缓存，否则被删类型在重启前无法继续用于校验
+        if (TransactionSynchronizationManager.isActualTransactionActive()
+                && TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    refreshTypes();
+                }
+            });
+        } else {
+            refreshTypes();
+        }
     }
 
     @Override
@@ -112,6 +130,7 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
         TopicType type = new TopicType();
         BeanUtils.copyProperties(vo, type);
         mapper.insert(type);
+        refreshTypes();
     }
 
     @Override
