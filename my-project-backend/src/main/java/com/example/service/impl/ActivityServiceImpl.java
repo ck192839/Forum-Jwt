@@ -1,5 +1,6 @@
 package com.example.service.impl;
 
+import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.example.entity.dto.Activity;
 import com.example.entity.dto.ActivityGrabEvent;
@@ -37,6 +38,7 @@ public class ActivityServiceImpl implements ActivityService {
     private static final int GRAB_LIMIT_COOLDOWN_SECONDS = 3; // 单用户防连点冷却
     private static final long LIST_CACHE_EXPIRE_SECONDS = 5;  // 活动列表短期缓存（名额数允许秒级滞后）
     private static final long SEND_CONFIRM_TIMEOUT_SECONDS = 5; // MQ publisher confirm 超时
+    private static final long GRAB_CONFIG_CACHE_EXPIRE_SECONDS = 30; // 报名热路径活动配置缓存
 
     @Resource
     StringRedisTemplate template;
@@ -70,7 +72,7 @@ public class ActivityServiceImpl implements ActivityService {
 
     @Override
     public GrabResult grab(int uid, int activityId) {
-        Activity activity = activityMapper.selectById(activityId);
+        Activity activity = loadActivityForGrab(activityId);
         if (activity == null) {
             return GrabResult.reject(400, "活动不存在");
         }
@@ -157,6 +159,32 @@ public class ActivityServiceImpl implements ActivityService {
         } catch (DataAccessException e) {
             log.error("释放报名幂等键失败: {}", key, e);
         }
+    }
+
+    /**
+     * 报名热路径的活动配置读取：洪峰下不能每个请求都查 DB，走 30 秒 Redis 缓存，
+     * miss 或 Redis 异常时回退直查 DB（读路径 fail-open，预扣写路径仍 fail-close）。
+     * 库存懒加载基准（totalStock-grabbed）因此允许 ≤30 秒滞后，由
+     * ActivityStockReconciler 以 DB 为基准定期纠偏。
+     */
+    private Activity loadActivityForGrab(int activityId) {
+        String key = Const.ACTIVITY_CONFIG_CACHE + activityId;
+        try {
+            String cached = template.opsForValue().get(key);
+            if (cached != null) return JSON.parseObject(cached, Activity.class);
+        } catch (DataAccessException e) {
+            log.warn("读取活动配置缓存失败, activity={}", activityId, e);
+        }
+        Activity activity = activityMapper.selectById(activityId);
+        if (activity != null) {
+            try {
+                template.opsForValue().set(key, JSON.toJSONString(activity),
+                        GRAB_CONFIG_CACHE_EXPIRE_SECONDS, TimeUnit.SECONDS);
+            } catch (DataAccessException e) {
+                log.warn("写入活动配置缓存失败, activity={}", activityId, e);
+            }
+        }
+        return activity;
     }
 
     /** 库存键懒加载（基准 = DB 已抢数与总名额之差），随后 DECR。Redis 故障返回 null。 */

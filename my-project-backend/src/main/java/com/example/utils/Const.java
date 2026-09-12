@@ -41,4 +41,5 @@ public final class Const {
     public final static String ACTIVITY_GRABBED = "activity:grabbed:";      // + activityId:uid，SETNX 幂等键
     public final static String ACTIVITY_GRAB_LIMIT = "activity:grab:limit:"; // + activityId:uid，防连点
     public final static String ACTIVITY_LIST_CACHE = "activity:list";       // 活动列表短期缓存
+    public final static String ACTIVITY_CONFIG_CACHE = "activity:config:";  // + activityId，报名热路径活动配置缓存
 }

@@ -1,5 +1,6 @@
 package com.example.service.impl;
 
+import com.alibaba.fastjson2.JSON;
 import com.example.entity.dto.Activity;
 import com.example.entity.dto.ActivityGrabEvent;
 import com.example.entity.dto.ActivityOrder;
@@ -7,6 +8,7 @@ import com.example.mapper.ActivityMapper;
 import com.example.mapper.ActivityOrderMapper;
 import com.example.service.ActivityService.GrabResult;
 import com.example.utils.CacheUtils;
+import com.example.utils.Const;
 import com.example.utils.FlowUtils;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -207,5 +209,42 @@ class ActivityServiceImplTest {
 
         assertEquals(200, result.code());
         verify(valueOperations).setIfAbsent(STOCK_KEY, "17");
+    }
+
+    @Test
+    void cachedActivityConfigServesGrabPathWithoutDbQuery() {
+        when(valueOperations.get(Const.ACTIVITY_CONFIG_CACHE + ACTIVITY_ID))
+                .thenReturn(JSON.toJSONString(openActivity()));
+        when(flowUtils.limitOnceCheck(anyString(), eq(3))).thenReturn(true);
+        when(valueOperations.setIfAbsent(eq(IDEMPOTENT_KEY), eq("1"), anyLong(), any(TimeUnit.class)))
+                .thenReturn(true);
+        lenient().when(template.hasKey(STOCK_KEY)).thenReturn(true);
+        lenient().when(valueOperations.decrement(STOCK_KEY)).thenReturn(5L);
+        stubPublishConfirm(true);
+
+        GrabResult result = service.grab(UID, ACTIVITY_ID);
+
+        assertEquals(200, result.code());
+        assertEventPublished();
+        verify(activityMapper, never()).selectById(ACTIVITY_ID);
+    }
+
+    @Test
+    void configCacheReadFailureFallsBackToDatabase() {
+        when(valueOperations.get(Const.ACTIVITY_CONFIG_CACHE + ACTIVITY_ID))
+                .thenThrow(new QueryTimeoutException("redis down"));
+        when(activityMapper.selectById(ACTIVITY_ID)).thenReturn(openActivity());
+        when(flowUtils.limitOnceCheck(anyString(), eq(3))).thenReturn(true);
+        when(valueOperations.setIfAbsent(eq(IDEMPOTENT_KEY), eq("1"), anyLong(), any(TimeUnit.class)))
+                .thenReturn(true);
+        lenient().when(template.hasKey(STOCK_KEY)).thenReturn(true);
+        lenient().when(valueOperations.decrement(STOCK_KEY)).thenReturn(5L);
+        stubPublishConfirm(true);
+
+        GrabResult result = service.grab(UID, ACTIVITY_ID);
+
+        assertEquals(200, result.code());
+        assertEventPublished();
+        verify(activityMapper).selectById(ACTIVITY_ID);
     }
 }
