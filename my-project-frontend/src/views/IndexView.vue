@@ -1,14 +1,14 @@
 <script setup>
 import {inject, reactive, ref, watch} from "vue";
 import {
-    Bell,
+    AlarmClock, Bell,
     ChatDotSquare, Check, CoffeeCup, Collection, DataLine,
-    Document, Files,
+    Document, Files, Finished,
     Location, Lock, Monitor,
     Notification, Operation,
     Position,
     School, Search,
-    Umbrella, User
+    Ticket, Umbrella, User
 } from "@element-plus/icons-vue";
 import LightCard from "@/components/LightCard.vue";
 import UserInfo from "@/components/UserInfo.vue";
@@ -22,6 +22,12 @@ import router from "@/router";
 const store = useStore()
 
 const userMenu = [
+    {
+        title: '抢活动', icon: AlarmClock, sub: [
+            { title: '活动报名', icon: Ticket, index: '/index/activity-list' },
+            { title: '我的报名', icon: Finished, index: '/index/my-activities' }
+        ]
+    },
     {
         title: '校园论坛', icon: Location, sub: [
             { title: '帖子广场', icon: ChatDotSquare, index: '/index' },

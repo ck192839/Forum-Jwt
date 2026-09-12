@@ -48,6 +48,14 @@ const router = createRouter({
                     name: 'user-setting',
                     component: () => import('@/views/settings/UserSetting.vue')
                 }, {
+                    path: 'activity-list',
+                    name: 'activity-list',
+                    component: () => import('@/views/forum/ActivityList.vue')
+                }, {
+                    path: 'my-activities',
+                    name: 'my-activities',
+                    component: () => import('@/views/forum/MyActivities.vue')
+                }, {
                     path: 'forum-setting',
                     name: 'forum-setting',
                     component: () => import('@/views/settings/ForumSetting.vue')

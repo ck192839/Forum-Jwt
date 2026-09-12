@@ -24,6 +24,8 @@ public final class Const {
     public final static String MQ_ERROR = "error";
     public final static String MQ_TOPIC_INDEX = "topic-index";
     public final static String MQ_TOPIC_INDEX_ERROR = "topic-index-error";
+    public final static String MQ_ACTIVITY_GRAB = "activity-grab";
+    public final static String MQ_ACTIVITY_GRAB_ERROR = "activity-grab-error";
     //用户角色
     public final static String ROLE_DEFAULT = "user";
     public final static String ROLE_ADMIN = "admin";
@@ -34,4 +36,9 @@ public final class Const {
     public final static String FORUM_TOPIC_COMMENT_COUNTER = "forum:topic:comment:";
     public final static String FORUM_TOPIC_PREVIEW_CACHE = "topic:preview:";
     public final static String FORUM_TOPIC_TOP_CACHE = "topic:top";
+    //抢活动
+    public final static String ACTIVITY_STOCK = "activity:stock:";          // + activityId，Redis 预扣库存
+    public final static String ACTIVITY_GRABBED = "activity:grabbed:";      // + activityId:uid，SETNX 幂等键
+    public final static String ACTIVITY_GRAB_LIMIT = "activity:grab:limit:"; // + activityId:uid，防连点
+    public final static String ACTIVITY_LIST_CACHE = "activity:list";       // 活动列表短期缓存
 }

@@ -95,4 +95,40 @@ public class RabbitConfiguration {
                 .deadLetterRoutingKey(Const.MQ_TOPIC_INDEX_ERROR)
                 .build();
     }
+
+    @Bean("activityGrabMessageRecoverer")
+    public RepublishMessageRecoverer activityGrabMessageRecoverer(RabbitTemplate rabbitTemplate) {
+        return new RepublishMessageRecoverer(rabbitTemplate, "", Const.MQ_ACTIVITY_GRAB_ERROR);
+    }
+
+    @Bean("activityGrabRabbitListenerContainerFactory")
+    public SimpleRabbitListenerContainerFactory activityGrabRabbitListenerContainerFactory(
+            ConnectionFactory connectionFactory,
+            MessageConverter messageConverter,
+            @Qualifier("activityGrabMessageRecoverer") MessageRecoverer messageRecoverer
+    ) {
+        SimpleRabbitListenerContainerFactory factory = new SimpleRabbitListenerContainerFactory();
+        factory.setConnectionFactory(connectionFactory);
+        factory.setMessageConverter(messageConverter);
+        factory.setDefaultRequeueRejected(false);
+        factory.setAdviceChain(RetryInterceptorBuilder.stateless()
+                .maxAttempts(3)
+                .backOffOptions(100, 2.0, 200)
+                .recoverer(messageRecoverer)
+                .build());
+        return factory;
+    }
+
+    @Bean("activityGrabErrorQueue")
+    public Queue activityGrabErrorQueue() {
+        return QueueBuilder.durable(Const.MQ_ACTIVITY_GRAB_ERROR).build();
+    }
+
+    @Bean("activityGrabQueue")
+    public Queue activityGrabQueue() {
+        return QueueBuilder.durable(Const.MQ_ACTIVITY_GRAB)
+                .deadLetterExchange("")
+                .deadLetterRoutingKey(Const.MQ_ACTIVITY_GRAB_ERROR)
+                .build();
+    }
 }

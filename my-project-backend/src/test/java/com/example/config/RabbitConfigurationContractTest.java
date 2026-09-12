@@ -56,6 +56,44 @@ class RabbitConfigurationContractTest {
     }
 
     @Test
+    void activityGrabListenerUsesItsDedicatedContainerFactory() throws Exception {
+        Method handle = Class.forName("com.example.listener.ActivityGrabListener").getMethod(
+                "handle",
+                com.example.entity.dto.ActivityGrabEvent.class
+        );
+
+        RabbitListener listener = handle.getAnnotation(RabbitListener.class);
+
+        assertEquals("activityGrabRabbitListenerContainerFactory", listener.containerFactory());
+    }
+
+    @Test
+    void dedicatedActivityGrabFactoryIsExposedAsABean() throws Exception {
+        Method factory = RabbitConfiguration.class.getMethod(
+                "activityGrabRabbitListenerContainerFactory",
+                org.springframework.amqp.rabbit.connection.ConnectionFactory.class,
+                org.springframework.amqp.support.converter.MessageConverter.class,
+                org.springframework.amqp.rabbit.retry.MessageRecoverer.class
+        );
+
+        assertEquals(
+                "activityGrabRabbitListenerContainerFactory",
+                factory.getAnnotation(Bean.class).value()[0]
+        );
+    }
+
+    @Test
+    void activityGrabDeadLetterRecovererRepublishesWithExceptionDiagnostics() throws Exception {
+        Method recoverer = RabbitConfiguration.class.getMethod(
+                "activityGrabMessageRecoverer",
+                RabbitTemplate.class
+        );
+
+        assertEquals("activityGrabMessageRecoverer", recoverer.getAnnotation(Bean.class).value()[0]);
+        assertEquals(RepublishMessageRecoverer.class, recoverer.getReturnType());
+    }
+
+    @Test
     void exampleConfigurationDoesNotEnableRetryForEverySimpleListener() {
         assertNoGlobalRabbitRetry("/application.yml.example");
         assertNoGlobalRabbitRetry("/application-dev.yml.example");
