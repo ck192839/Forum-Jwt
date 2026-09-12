@@ -25,7 +25,9 @@ import org.springframework.stereotype.Service;
 
 import java.util.Date;
 import java.util.List;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * 抢活动服务：报名洪峰的多层削减都在这一条链路上——
@@ -39,7 +41,7 @@ public class ActivityServiceImpl implements ActivityService {
 
     private static final int GRAB_LIMIT_COOLDOWN_SECONDS = 3; // 单用户防连点冷却
     private static final long LIST_CACHE_EXPIRE_SECONDS = 5;  // 活动列表短期缓存（名额数允许秒级滞后）
-    private static final long SEND_CONFIRM_TIMEOUT_SECONDS = 5; // MQ publisher confirm 超时
+    private static final long SEND_CONFIRM_TIMEOUT_MILLIS = 1000; // MQ publisher confirm 同步等待（broker 内存级回执，超时按投递失败回补）
     private static final long GRAB_CONFIG_CACHE_EXPIRE_SECONDS = 30; // 报名热路径活动配置缓存
 
     @Resource
@@ -275,15 +277,28 @@ public class ActivityServiceImpl implements ActivityService {
         }
     }
 
-    /** 发送报名事件并等待 publisher confirm（5 秒），确认失败视为投递失败。 */
+    /** 发送报名事件并同步等待 publisher confirm（1 秒），确认失败或消息被退回均视为投递失败。 */
     private boolean sendGrabEvent(ActivityGrabEvent event) {
         try {
             CorrelationData correlation = new CorrelationData();
             rabbitTemplate.convertAndSend(Const.MQ_ACTIVITY_GRAB, event, correlation);
-            CorrelationData.Confirm confirm = correlation.getFuture().get(SEND_CONFIRM_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            CorrelationData.Confirm confirm = correlation.getFuture()
+                    .get(SEND_CONFIRM_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS);
+            // 消息不可路由时 confirm 仍可能 ack=true，必须先查退回再查 ack
+            if (correlation.getReturned() != null) {
+                log.error("报名事件被 RabbitMQ 退回, activity={}, uid={}", event.activityId(), event.uid());
+                return false;
+            }
             return confirm != null && confirm.isAck();
-        } catch (Exception e) {
-            log.error("报名事件投递失败, activity={}, uid={}", event.activityId(), event.uid(), e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.error("报名事件等待 confirm 被中断, activity={}, uid={}", event.activityId(), event.uid(), e);
+            return false;
+        } catch (TimeoutException e) {
+            log.error("报名事件等待 confirm 超时, activity={}, uid={}", event.activityId(), event.uid());
+            return false;
+        } catch (ExecutionException e) {
+            log.error("报名事件等待 confirm 异常, activity={}, uid={}", event.activityId(), event.uid(), e);
             return false;
         }
     }

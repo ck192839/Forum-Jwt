@@ -16,6 +16,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.amqp.core.Message;
+import org.springframework.amqp.core.MessageProperties;
+import org.springframework.amqp.core.ReturnedMessage;
 import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.dao.QueryTimeoutException;
@@ -109,8 +112,13 @@ class ActivityServiceImplTest {
 
     /** grab 同步等待 confirm，因此必须在 convertAndSend 调用时立即完成 future。 */
     private void stubPublishConfirm(boolean ack) {
+        stubPublishConfirm(ack, null);
+    }
+
+    private void stubPublishConfirm(boolean ack, ReturnedMessage returned) {
         doAnswer(invocation -> {
             CorrelationData correlation = invocation.getArgument(2);
+            if (returned != null) correlation.setReturned(returned);
             correlation.getFuture().complete(new CorrelationData.Confirm(ack, null));
             return null;
         }).when(rabbitTemplate).convertAndSend(anyString(), any(ActivityGrabEvent.class), any(CorrelationData.class));
@@ -316,5 +324,19 @@ class ActivityServiceImplTest {
 
         assertTrue(error != null && error.contains("不能删除"));
         verify(activityMapper, never()).deleteById(any(Serializable.class));
+    }
+
+    @Test
+    void returnedMessageAfterAckIsTreatedAsDeliveryFailure() {
+        // 消息不可路由时 confirm 仍可能 ack=true，必须按退回处理
+        stubGrabPathAccepted(true, 5L);
+        Message message = new Message("{}".getBytes(), new MessageProperties());
+        stubPublishConfirm(true, new ReturnedMessage(message, 312, "NO_ROUTE", "", "activity-grab"));
+
+        GrabResult result = service.grab(UID, ACTIVITY_ID);
+
+        assertEquals(500, result.code());
+        verify(valueOperations).increment(STOCK_KEY);
+        verify(template).delete(IDEMPOTENT_KEY);
     }
 }
