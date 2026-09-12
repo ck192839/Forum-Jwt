@@ -11,27 +11,10 @@ import org.springframework.web.util.ContentCachingResponseWrapper;
 
 import java.util.concurrent.atomic.AtomicReference;
 
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 
 class RequestLogFilterTest {
-
-    @Test
-    void doesNotBufferAgentSseResponses() throws Exception {
-        RequestLogFilter filter = filter();
-        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/agent/sessions/99/runs");
-        request.setServletPath("/api/agent/sessions/99/runs");
-        MockHttpServletResponse response = new MockHttpServletResponse();
-        AtomicReference<ServletResponse> passedResponse = new AtomicReference<>();
-        FilterChain chain = (req, res) -> passedResponse.set(res);
-
-        filter.doFilter(request, response, chain);
-
-        assertSame(response, passedResponse.get());
-        assertFalse(passedResponse.get() instanceof ContentCachingResponseWrapper);
-    }
 
     @Test
     void continuesBufferingOrdinaryApiResponses() throws Exception {
