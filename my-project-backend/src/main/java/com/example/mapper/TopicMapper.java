@@ -3,6 +3,7 @@ package com.example.mapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.example.entity.dto.Interact;
 import com.example.entity.dto.Topic;
+import com.example.entity.dto.TopicInteractCount;
 import com.example.entity.vo.response.TopicVO;
 import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.DeleteProvider;
@@ -13,6 +14,7 @@ import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.SelectProvider;
 import org.apache.ibatis.annotations.Param;
 
+import java.util.Collection;
 import java.util.List;
 
 @Mapper
@@ -27,6 +29,10 @@ public interface TopicMapper extends BaseMapper<Topic> {
 
         @SelectProvider(type = TopicSqlProvider.class, method = "interactCount")
         int interactCount(@Param("tid") int tid, @Param("type") InteractType type);//获取帖子的互动次数
+
+        @SelectProvider(type = TopicSqlProvider.class, method = "interactCountBatch")
+        List<TopicInteractCount> interactCountBatch(@Param("tids") Collection<Integer> tids,
+                                                    @Param("type") InteractType type);//批量获取多个帖子的互动次数
 
         @SelectProvider(type = TopicSqlProvider.class, method = "userInteractCount")
         int userInteractCount(@Param("tid") int tid, @Param("uid") int uid,

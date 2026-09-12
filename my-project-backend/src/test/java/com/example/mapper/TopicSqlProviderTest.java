@@ -32,8 +32,22 @@ class TopicSqlProviderTest {
     }
 
     @Test
+    void buildsBatchCountSqlGroupedByTidFromAnEnumMappedTableName() {
+        String sql = TopicSqlProvider.interactCountBatch(Map.of(
+                "tids", List.of(1, 2, 3),
+                "type", InteractType.LIKE));
+
+        assertTrue(sql.contains("db_topic_interact_like"));
+        assertTrue(sql.contains("group by tid"));
+        assertTrue(sql.contains("foreach collection='tids'"));
+        assertFalse(sql.contains("${"));
+    }
+
+    @Test
     void rejectsRawTableNameValuesEvenWhenProviderIsCalledDirectly() {
         assertThrows(IllegalArgumentException.class,
                 () -> TopicSqlProvider.interactCount(Map.of("tid", 1, "type", "like")));
+        assertThrows(IllegalArgumentException.class,
+                () -> TopicSqlProvider.interactCountBatch(Map.of("tids", List.of(1), "type", "like")));
     }
 }

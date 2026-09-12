@@ -24,21 +24,25 @@ import com.example.utils.FlowUtils;
 import com.example.utils.ProhibitedUtils;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.Resource;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements TopicService {
     @Resource
@@ -239,27 +243,36 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
     public List<CommentVO> comments(int tid, int pageNumber) {// todo 学习
         Page<TopicComment> page = new Page<>(pageNumber, 10);
         commentMapper.selectPage(page, Wrappers.<TopicComment>query().eq("tid", tid).orderByDesc("time"));
-        return page.getRecords().stream()
+        List<TopicComment> records = page.getRecords();
+        if (records.isEmpty())
+            return List.of();
+        // 批量取本页评论的作者信息与被引用评论，避免逐条 N+1
+        Set<Integer> uids = records.stream().map(TopicComment::getUid).collect(Collectors.toSet());
+        Map<Integer, Account> accounts = accountMapper.selectBatchIds(uids).stream()
+                .collect(Collectors.toMap(Account::getId, account -> account));
+        Map<Integer, AccountDetails> details = accountDetailsMapper.selectBatchIds(uids).stream()
+                .collect(Collectors.toMap(AccountDetails::getId, detail -> detail));
+        Map<Integer, AccountPrivacy> privacies = accountPrivacyMapper.selectBatchIds(uids).stream()
+                .collect(Collectors.toMap(AccountPrivacy::getId, privacy -> privacy));
+        Set<Integer> quoteIds = records.stream().map(TopicComment::getQuote)
+                .filter(quote -> quote != null && quote > 0)
+                .collect(Collectors.toSet());
+        Map<Integer, TopicComment> quotes = quoteIds.isEmpty() ? Map.of()
+                : commentMapper.selectBatchIds(quoteIds).stream()
+                        .collect(Collectors.toMap(TopicComment::getId, comment -> comment));
+        return records.stream()
                 .map(dto -> {
                     CommentVO vo = new CommentVO();
                     BeanUtils.copyProperties(dto, vo);
-                    if (dto.getQuote() > 0) {
-                        TopicComment comment = commentMapper.selectOne(
-                                Wrappers.<TopicComment>query()
-                                        .eq("id", dto.getQuote())
-                                        .orderByDesc("time"));
-                        if (comment != null) {
-                            JSONObject object = JSONObject.parseObject(comment.getContent());
-                            StringBuilder builder = new StringBuilder();
-                            this.shortContent(object.getJSONArray("ops"), builder, ignore -> {
-                            });
-                            vo.setQuote(builder.toString());
-                        } else {
-                            vo.setQuote("此评论已被删除");
-                        }
+                    if (dto.getQuote() != null && dto.getQuote() > 0) {
+                        TopicComment quote = quotes.get(dto.getQuote());
+                        vo.setQuote(quote == null || quote.getContent() == null
+                                ? "此评论已被删除"
+                                : shortText(quote.getContent()));
                     }
                     CommentVO.User user = new CommentVO.User();
-                    this.fillUserDetailByPrivacy(user, dto.getUid());
+                    this.copyWithPrivacy(user, details.get(dto.getUid()),
+                            accounts.get(dto.getUid()), privacies.get(dto.getUid()));
                     vo.setUser(user);
                     return vo;
                 }).toList();
@@ -347,7 +360,7 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
                 .select("id", "title", "uid", "type", "time", "top", "locked", "invisible")
                 .like(keyword != null, "title", "%" + keyword + "%")
                 .orderByDesc("time"));
-        List<TopicPreviewVO> list = topicPage.getRecords().stream().map(this::resolveToPreview).toList();
+        List<TopicPreviewVO> list = this.resolveToPreviews(topicPage.getRecords());
         JSONObject object = new JSONObject();
         object.put("total", topicPage.getTotal());
         object.put("list", list);
@@ -371,9 +384,7 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
                     .eq("invisible", 0).orderByDesc("time"));
         }
         List<Topic> topics = page.getRecords();
-        list = topics.stream()
-                .map(this::resolveToPreview)
-                .toList();
+        list = this.resolveToPreviews(topics);
         cacheUtils.saveListToCache(key, list, 60);// 放入缓存，过期时间60秒
         return list;
     }
@@ -422,10 +433,8 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
     public void interact(Interact interact, boolean state) {// 帖子交互写入缓存，state=执行/取消
         String type = interact.getType();
         InteractType.parse(type);
-        synchronized (type.intern()) {
-            template.opsForHash().put(type, interact.toKey(), Boolean.toString(state));
-            this.saveInteractSchedule(type);
-        }
+        template.opsForHash().put(type, interact.toKey(), Boolean.toString(state));
+        this.saveInteractSchedule(type);
     }
 
     @Override
@@ -488,74 +497,139 @@ public class TopicServiceImpl extends ServiceImpl<TopicMapper, Topic> implements
 
     private boolean hasInteract(int tid, int uid, String type) {// 判断用户是否对帖子有互动
         InteractType interactType = InteractType.parse(type);
-        String key = tid + ":" + uid;
-        if (template.opsForHash().hasKey(type, key)) {
-            return Boolean.parseBoolean(template.opsForHash().entries(type).get(key).toString());
-        }
+        Object state = template.opsForHash().get(type, tid + ":" + uid);
+        if (state != null)
+            return Boolean.parseBoolean(state.toString());
         return baseMapper.userInteractCount(tid, uid, interactType) > 0;
     }
 
-    private final Map<String, Boolean> state = new HashMap<>();
+    /**
+     * 原子弹出一个互动 hash 的全部内容：HGETALL 与 DEL 在 Redis 内一次性完成，
+     * 弹出之后的新写入落在新 hash 里由下一轮回收，不存在"读了再删键"的丢失窗口。
+     * 返回扁平的 [field, value, field, value, ...] 列表。
+     */
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private static final DefaultRedisScript<List<String>> POP_INTERACT_SCRIPT =
+            new DefaultRedisScript<>("""
+                    local values = redis.call('HGETALL', KEYS[1])
+                    if #values > 0 then
+                        redis.call('DEL', KEYS[1])
+                    end
+                    return values
+                    """, (Class) List.class);
+
+    private final Map<String, Boolean> pendingFlush = new ConcurrentHashMap<>();
     ScheduledExecutorService service = Executors.newScheduledThreadPool(2);
 
     private void saveInteractSchedule(String type) {// 延迟批量写入数据库
-        if (!state.getOrDefault(type, false)) {
-            state.put(type, true);
-            service.schedule(() -> {
-                this.saveInteract(type);
-                state.put(type, false);
-            }, 3, TimeUnit.SECONDS);
-        }
+        pendingFlush.compute(type, (key, pending) -> {
+            if (Boolean.TRUE.equals(pending))
+                return true;
+            service.schedule(() -> this.flushInteract(key), 3, TimeUnit.SECONDS);
+            return true;
+        });
     }
 
-    private void saveInteract(String type) {// 从缓存中获取帖子交互并保存到数据库
+    private void flushInteract(String type) {
+        try {
+            this.saveInteract(type);
+        } finally {
+            pendingFlush.remove(type);
+        }
+        // 标志移除后若又有新写入，补排一轮——否则这次写入会等到下一次 interact 才落库
+        if (Boolean.TRUE.equals(template.hasKey(type)))
+            this.saveInteractSchedule(type);
+    }
+
+    private void saveInteract(String type) {// 原子弹出缓存中的互动并写入数据库
         InteractType interactType = InteractType.parse(type);
-        synchronized (type.intern()) {
-            List<Interact> check = new LinkedList<>();// 添加的交互
-            List<Interact> uncheck = new LinkedList<>();// 取消交互
-            template.opsForHash().entries(type).forEach((k, v) -> {
-                if (Boolean.parseBoolean(v.toString()))// 如果v为true
-                    check.add(Interact.parseInteract(k.toString(), type));
-                else
-                    uncheck.add(Interact.parseInteract(k.toString(), type));
-            });
-
-            if (!check.isEmpty()) {
+        List<String> flat = template.execute(POP_INTERACT_SCRIPT, List.of(type));
+        Map<Object, Object> entries = new LinkedHashMap<>();
+        if (flat != null) {
+            for (int i = 0; i + 1 < flat.size(); i += 2)
+                entries.put(flat.get(i), flat.get(i + 1));
+        }
+        if (entries.isEmpty())
+            return;
+        List<Interact> check = new LinkedList<>();// 添加的交互
+        List<Interact> uncheck = new LinkedList<>();// 取消交互
+        entries.forEach((k, v) -> {
+            if (Boolean.parseBoolean(v.toString()))// 如果v为true
+                check.add(Interact.parseInteract(k.toString(), type));
+            else
+                uncheck.add(Interact.parseInteract(k.toString(), type));
+        });
+        try {
+            if (!check.isEmpty())
                 baseMapper.addInteract(check, interactType);
-            }
-
-            if (!uncheck.isEmpty()) {
+            if (!uncheck.isEmpty())
                 baseMapper.deleteInteract(uncheck, interactType);
-            }
-            template.delete(type);// 删除缓存
+        } catch (Exception e) {
+            // 落库失败把弹出的互动放回缓存，等下次触发重试，数据不丢
+            template.opsForHash().putAll(type, entries);
+            log.error("互动批量落库失败,已还原缓存等待重试, type={}", type, e);
         }
     }
 
-    private <T> T fillUserDetailByPrivacy(T target, int uid) {// 根据隐私设置展示用户详情
-        AccountDetails accountDetails = accountDetailsMapper.selectById(uid);
-        Account account = accountMapper.selectById(uid);
-        AccountPrivacy accountPrivacy = accountPrivacyMapper.selectById(uid);
-        String[] ignores = accountPrivacy.hiddenFields();
-        BeanUtils.copyProperties(accountDetails, target, ignores);
-        BeanUtils.copyProperties(account, target, ignores);
+    private <T> T copyWithPrivacy(T target, AccountDetails details, Account account, AccountPrivacy privacy) {
+        String[] ignores = privacy == null ? new String[0] : privacy.hiddenFields();
+        if (details != null)
+            BeanUtils.copyProperties(details, target, ignores);
+        if (account != null)
+            BeanUtils.copyProperties(account, target, ignores);
         return target;
     }
 
-    private TopicPreviewVO resolveToPreview(Topic topic) {
-        TopicPreviewVO vo = new TopicPreviewVO();
-        BeanUtils.copyProperties(accountMapper.selectById(topic.getUid()), vo);
-        BeanUtils.copyProperties(topic, vo);
-        vo.setLike(baseMapper.interactCount(topic.getId(), InteractType.LIKE));
-        vo.setCollect(baseMapper.interactCount(topic.getId(), InteractType.COLLECT));
-        List<String> images = new ArrayList<>();
-        StringBuilder previewText = new StringBuilder();
-        if (topic.getContent() != null) {
-            JSONArray ops = JSONObject.parseObject(topic.getContent()).getJSONArray("ops");
-            this.shortContent(ops, previewText, obj -> images.add(obj.toString()));
-        }
-        vo.setText(previewText.length() > 300 ? previewText.substring(0, 300) : previewText.toString());
-        vo.setImages(images);
-        return vo;
+    private <T> T fillUserDetailByPrivacy(T target, int uid) {// 根据隐私设置展示用户详情
+        return this.copyWithPrivacy(target, accountDetailsMapper.selectById(uid),
+                accountMapper.selectById(uid), accountPrivacyMapper.selectById(uid));
+    }
+
+    private List<TopicPreviewVO> resolveToPreviews(List<Topic> topics) {// 批量组装帖子预览，消除逐条 N+1
+        if (topics.isEmpty())
+            return List.of();
+        Set<Integer> uids = topics.stream().map(Topic::getUid).collect(Collectors.toSet());
+        Map<Integer, Account> accounts = accountMapper.selectBatchIds(uids).stream()
+                .collect(Collectors.toMap(Account::getId, account -> account));
+        Map<Integer, Integer> likes = this.interactCounts(topics, InteractType.LIKE);
+        Map<Integer, Integer> collects = this.interactCounts(topics, InteractType.COLLECT);
+        return topics.stream()
+                .map(topic -> {
+                    TopicPreviewVO vo = new TopicPreviewVO();
+                    Account account = accounts.get(topic.getUid());
+                    if (account != null)
+                        BeanUtils.copyProperties(account, vo);
+                    BeanUtils.copyProperties(topic, vo);
+                    vo.setLike(likes.getOrDefault(topic.getId(), 0));
+                    vo.setCollect(collects.getOrDefault(topic.getId(), 0));
+                    List<String> images = new ArrayList<>();
+                    StringBuilder previewText = new StringBuilder();
+                    if (topic.getContent() != null) {
+                        JSONArray ops = JSONObject.parseObject(topic.getContent()).getJSONArray("ops");
+                        this.shortContent(ops, previewText, obj -> images.add(obj.toString()));
+                    }
+                    vo.setText(previewText.length() > 300 ? previewText.substring(0, 300) : previewText.toString());
+                    vo.setImages(images);
+                    return vo;
+                }).toList();
+    }
+
+    private Map<Integer, Integer> interactCounts(List<Topic> topics, InteractType type) {
+        List<Integer> tids = topics.stream().map(Topic::getId).toList();
+        if (tids.isEmpty())
+            return Map.of();
+        Map<Integer, Integer> counts = new HashMap<>();
+        baseMapper.interactCountBatch(tids, type)
+                .forEach(row -> counts.put(row.getTid(), row.getTotal()));
+        return counts;
+    }
+
+    private String shortText(String content) {// 从 delta JSON 中提取纯文本摘要
+        JSONObject object = JSONObject.parseObject(content);
+        StringBuilder builder = new StringBuilder();
+        this.shortContent(object.getJSONArray("ops"), builder, ignore -> {
+        });
+        return builder.toString();
     }
 
     private void shortContent(JSONArray ops, StringBuilder previewText, Consumer<Object> imagerHandler) {// 文本预览

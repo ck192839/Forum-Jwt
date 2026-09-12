@@ -33,6 +33,15 @@ public final class TopicSqlProvider {
         return "select count(*) from " + tableName(parameters) + " where tid = #{tid}";
     }
 
+    public static String interactCountBatch(Map<String, Object> parameters) {
+        return "<script>"
+                + "select tid, count(*) as total from " + tableName(parameters)
+                + " where tid in "
+                + "<foreach collection='tids' item='tid' open='(' separator=',' close=')'>#{tid}</foreach>"
+                + " group by tid"
+                + "</script>";
+    }
+
     public static String userInteractCount(Map<String, Object> parameters) {
         return "select count(*) from " + tableName(parameters)
                 + " where tid = #{tid} and uid = #{uid}";
