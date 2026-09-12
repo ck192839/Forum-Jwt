@@ -60,7 +60,11 @@ public class ActivityGrabListener {
         try {
             activityOrderMapper.insert(order);
         } catch (DuplicateKeyException e) {
-            // 并发下唯一键兜底：视为已处理（容器重试重放时也会走到这里）
+            // 并发下唯一键兜底：视为已处理（容器重试重放时也会走到这里）。
+            // 此时 grabOnce 可能已多占一个名额（本条投递没有对应订单），保守回补
+            if (grabbed) {
+                registerStockCompensation(event.activityId(), event.uid());
+            }
             return;
         }
         if (!grabbed) {
@@ -68,7 +72,10 @@ public class ActivityGrabListener {
         }
     }
 
-    /** DB 兜底失败后的回补：库存 +1、释放幂等键，事务提交后执行。 */
+    /**
+     * DB 兜底失败后的回补：库存 +1、释放幂等键，事务提交后执行。
+     * 回补失败的缺口由 ActivityStockReconciler 对账任务以 DB 为基准回收。
+     */
     private void registerStockCompensation(int activityId, int uid) {
         Runnable compensate = () -> {
             try {

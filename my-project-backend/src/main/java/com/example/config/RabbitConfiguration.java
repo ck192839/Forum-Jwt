@@ -124,6 +124,23 @@ public class RabbitConfiguration {
         return QueueBuilder.durable(Const.MQ_ACTIVITY_GRAB_ERROR).build();
     }
 
+    /**
+     * 死信消费者专用工厂：不带 RepublishMessageRecoverer——recoverer 的目标是
+     * activity-grab-error 自身，重试耗尽会重新投递回本队列造成死循环。
+     * 配套的 ActivityGrabErrorListener 内部吞异常，此处的 requeue=false 只是兜底。
+     */
+    @Bean("activityGrabErrorRabbitListenerContainerFactory")
+    public SimpleRabbitListenerContainerFactory activityGrabErrorRabbitListenerContainerFactory(
+            ConnectionFactory connectionFactory,
+            MessageConverter messageConverter
+    ) {
+        SimpleRabbitListenerContainerFactory factory = new SimpleRabbitListenerContainerFactory();
+        factory.setConnectionFactory(connectionFactory);
+        factory.setMessageConverter(messageConverter);
+        factory.setDefaultRequeueRejected(false);
+        return factory;
+    }
+
     @Bean("activityGrabQueue")
     public Queue activityGrabQueue() {
         return QueueBuilder.durable(Const.MQ_ACTIVITY_GRAB)

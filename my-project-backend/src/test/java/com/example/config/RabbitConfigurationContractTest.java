@@ -94,6 +94,27 @@ class RabbitConfigurationContractTest {
     }
 
     @Test
+    void activityGrabErrorListenerUsesItsOwnFactoryWithoutRecoverer() throws Exception {
+        Method handle = Class.forName("com.example.listener.ActivityGrabErrorListener").getMethod(
+                "handle",
+                com.example.entity.dto.ActivityGrabEvent.class
+        );
+
+        RabbitListener listener = handle.getAnnotation(RabbitListener.class);
+
+        // 复用带 recoverer 的工厂会把重试耗尽的消息重新投递回本队列造成死循环
+        assertEquals("activityGrabErrorRabbitListenerContainerFactory", listener.containerFactory());
+
+        Method factory = RabbitConfiguration.class.getMethod(
+                "activityGrabErrorRabbitListenerContainerFactory",
+                org.springframework.amqp.rabbit.connection.ConnectionFactory.class,
+                org.springframework.amqp.support.converter.MessageConverter.class
+        );
+
+        assertEquals("activityGrabErrorRabbitListenerContainerFactory", factory.getAnnotation(Bean.class).value()[0]);
+    }
+
+    @Test
     void exampleConfigurationDoesNotEnableRetryForEverySimpleListener() {
         assertNoGlobalRabbitRetry("/application.yml.example");
         assertNoGlobalRabbitRetry("/application-dev.yml.example");
