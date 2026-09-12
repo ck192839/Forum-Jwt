@@ -16,6 +16,7 @@ import {apiNotificationDelete, apiNotificationDeleteAll, apiNotificationList} fr
 import {apiForumTypes, apiTopicSearch} from "@/net/api/forum";
 import {notificationOpenRequest} from "@/components/notificationBridge";
 import TopicTag from "@/components/TopicTag.vue";
+import {sanitizeHtml} from "@/utils/sanitize";
 import {useStore} from "@/store";
 import router from "@/router";
 
@@ -137,13 +138,13 @@ apiForumTypes(data => {
                             <div class="search-item">
                                 <div class="title" v-if="item.highlight.title">
                                     <topic-tag style="margin-right: 10px;" :type="item.type"/>
-                                    <span v-html="item.highlight.title"></span>
+                                    <span v-html="sanitizeHtml(item.highlight.title)"></span>
                                 </div>
                                 <div class="title" v-else>
                                     <topic-tag style="margin-right: 10px;" :type="item.type"/>
                                     <span>{{ item.title }}</span>
                                 </div>
-                                <div class="desc" v-if="item.highlight.intro" v-html="item.highlight.intro"></div>
+                                <div class="desc" v-if="item.highlight.intro" v-html="sanitizeHtml(item.highlight.intro)"></div>
                                 <div class="desc" v-else>{{ item.intro }}</div>
                             </div>
                         </template>

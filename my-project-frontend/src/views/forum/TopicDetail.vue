@@ -13,7 +13,7 @@ import {
     Plus,
     Star
 } from "@element-plus/icons-vue";
-import { QuillDeltaToHtmlConverter } from 'quill-delta-to-html';
+import {deltaToHtml} from "@/utils/sanitize";
 import Card from "@/components/Card.vue";
 import router from "@/router";
 import TopicTag from "@/components/TopicTag.vue";
@@ -64,12 +64,6 @@ const init = () => apiForumTopic(tid.value, data => {
     loadComments(1)
 })
 init()
-
-function convertToHtml(content) {
-    const ops = JSON.parse(content).ops
-    const converter = new QuillDeltaToHtmlConverter(ops, { inlineStyles: true });
-    return converter.convert();
-}
 
 function interact(type, message) {
     apiForumInteract(tid.value, type, topic, message)
@@ -176,7 +170,7 @@ function deleteComment(id) {
                 <div class="desc" style="margin: 0 5px">{{topic.data.user.desc}}</div>
             </div>
             <div class="topic-main-right">
-                <div class="topic-content" v-html="convertToHtml(topic.data.content)"></div>
+                <div class="topic-content" v-html="deltaToHtml(topic.data.content)"></div>
                 <el-divider/>
                 <div style="font-size: 13px;color: grey;text-align: center">
                     <div>发帖时间: {{new Date(topic.data.time).toLocaleString()}}</div>
@@ -237,7 +231,7 @@ function deleteComment(id) {
                         <div v-if="item.quote" class="comment-quote">
                             回复: {{item.quote}}
                         </div>
-                        <div class="topic-content" v-html="convertToHtml(item.content)"></div>
+                        <div class="topic-content" v-html="deltaToHtml(item.content)"></div>
                         <div style="text-align: right">
                             <el-link :icon="ChatSquare" @click="comment.show = true;comment.quote = item"
                                      type="info">&nbsp;回复评论</el-link>
