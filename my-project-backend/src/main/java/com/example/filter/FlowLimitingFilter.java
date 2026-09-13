@@ -55,19 +55,17 @@ public class FlowLimitingFilter extends HttpFilter {
     }
 
     /**
-     * 尝试对指定IP地址请求计数，如果被限制则无法继续访问
+     * 尝试对指定IP地址请求计数，如果被限制则无法继续访问。
+     * 计数与封禁检查已合并为单次 Lua 原子脚本（见 FlowUtils），
+     * 无需 JVM 锁——锁内做网络 IO 曾把吞吐钉死在 ~245 QPS。
      * @param address 请求IP地址
      * @param requestUri 请求路径
      * @return 是否操作成功
      */
     private boolean tryCount(String address, String requestUri) {
-        synchronized (address.intern()) {
-            if(template.hasKey(Const.FLOW_LIMIT_BLOCK + address))
-                return false;
-            String counterKey = Const.FLOW_LIMIT_COUNTER + address + ":" + requestUri;
-            String blockKey = Const.FLOW_LIMIT_BLOCK + address;
-            return utils.limitPeriodCheck(counterKey, blockKey, block, limit, period);
-        }
+        String counterKey = Const.FLOW_LIMIT_COUNTER + address + ":" + requestUri;
+        String blockKey = Const.FLOW_LIMIT_BLOCK + address;
+        return utils.limitPeriodCheck(counterKey, blockKey, block, limit, period);
     }
 
     /**
